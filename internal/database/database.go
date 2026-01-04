@@ -1,18 +1,19 @@
 package database
 
 import (
-	"context"
 	"database/sql"
+	"embed"
 	"log/slog"
 	"os"
 
-	_ "github.com/go-sql-driver/mysql"
-	sqldblogger "github.com/simukti/sqldb-logger"
+	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
 
-	"mccwk.com/lk/models"
+	"mccwk.com/lk/internal/models"
 )
 
-// const dateFmt = "2006-01-02 15:04:05"
+//go:embed migrations/*.sql
+var embedMigrations embed.FS
 
 type Database struct {
 	Filename string
@@ -20,55 +21,48 @@ type Database struct {
 	Queries  *models.Queries
 }
 
-func New(connStr string) *Database {
-	conn, err := sql.Open("mysql", connStr)
+func New(dbPath string) *Database {
+	conn, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		slog.Error(err.Error())
+		slog.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
 
-	// Wrap connection with SQL logger
-	// logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	// loggerAdapter := NewSlogAdapter(logger)
-	// conn = sqldblogger.OpenDriver(connStr, conn.Driver(), loggerAdapter, sqldblogger.WithSQLQueryFieldname("sql"))
+	// Enable foreign keys
+	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		slog.Error("failed to enable foreign keys", "error", err)
+		os.Exit(1)
+	}
 
-	db := Database{}
-	db.Conn = conn
-	db.Queries = models.New(db.Conn)
+	db := &Database{
+		Filename: dbPath,
+		Conn:     conn,
+		Queries:  models.New(conn),
+	}
 
-	return &db
+	// Run migrations
+	if err := db.RunMigrations(); err != nil {
+		slog.Error("failed to run migrations", "error", err)
+		os.Exit(1)
+	}
+
+	return db
 }
 
 func (db *Database) Close() error {
 	return db.Conn.Close()
 }
 
-// SlogAdapter implements sqldblogger.Logger interface for slog
-type SlogAdapter struct {
-	logger *slog.Logger
-}
+func (db *Database) RunMigrations() error {
+	goose.SetBaseFS(embedMigrations)
 
-func NewSlogAdapter(logger *slog.Logger) *SlogAdapter {
-	return &SlogAdapter{logger: logger}
-}
-
-func (s *SlogAdapter) Log(ctx context.Context, level sqldblogger.Level, msg string, data map[string]interface{}) {
-	var slogLevel slog.Level
-	switch level {
-	case sqldblogger.LevelError:
-		slogLevel = slog.LevelError
-	case sqldblogger.LevelInfo:
-		slogLevel = slog.LevelInfo
-	case sqldblogger.LevelDebug:
-		slogLevel = slog.LevelDebug
-	default:
-		slogLevel = slog.LevelInfo
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		return err
 	}
 
-	attrs := make([]slog.Attr, 0, len(data))
-	for k, v := range data {
-		attrs = append(attrs, slog.Any(k, v))
+	if err := goose.Up(db.Conn, "migrations"); err != nil {
+		return err
 	}
 
-	s.logger.LogAttrs(ctx, slogLevel, msg, attrs...)
+	return nil
 }

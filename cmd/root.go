@@ -3,11 +3,16 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joho/godotenv"
 	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
 	"log/slog"
+
+	"mccwk.com/lk/internal/database"
+	"mccwk.com/lk/internal/tui"
 )
 
 const VERSION = "1.0.0"
@@ -20,8 +25,7 @@ var rootCmd = &cobra.Command{
 	Use:   "lk",
 	Short: "Link manager",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("no subcommand specified")
-		// TODO: list commands, verify ENV vars
+		startTUI()
 	},
 }
 
@@ -63,5 +67,37 @@ func setupLogging() {
 				Level: level,
 			}))
 		slog.SetDefault(logger)
+	}
+}
+
+func startTUI() {
+	// Load .env file if it exists
+	_ = godotenv.Load()
+
+	// Get database path from environment or use default
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			slog.Error("failed to get home directory", "error", err)
+			os.Exit(1)
+		}
+		dbPath = filepath.Join(homeDir, ".lk.db")
+	}
+
+	// Get OpenAI API key from environment
+	apiKey := os.Getenv("OPENAI_API_KEY")
+
+	// Initialize database
+	db := database.New(dbPath)
+	defer db.Close()
+
+	// Create and run TUI
+	model := tui.NewModel(db, apiKey)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	if _, err := p.Run(); err != nil {
+		slog.Error("TUI error", "error", err)
+		os.Exit(1)
 	}
 }
