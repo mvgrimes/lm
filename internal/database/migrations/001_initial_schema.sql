@@ -87,25 +87,13 @@ CREATE VIRTUAL TABLE links_fts USING fts5(
 );
 
 -- Create triggers to keep FTS index in sync
-CREATE TRIGGER links_fts_insert AFTER INSERT ON links BEGIN
-    INSERT INTO links_fts(rowid, url, title, content, summary)
-    VALUES (new.id, new.url, new.title, new.content, new.summary);
-END;
+CREATE TRIGGER links_fts_insert AFTER INSERT ON links BEGIN INSERT INTO links_fts(rowid, url, title, content, summary) VALUES (new.id, new.url, new.title, new.content, new.summary); END;
 
-CREATE TRIGGER links_fts_update AFTER UPDATE ON links BEGIN
-    UPDATE links_fts SET 
-        url = new.url,
-        title = new.title,
-        content = new.content,
-        summary = new.summary
-    WHERE rowid = new.id;
-END;
+CREATE TRIGGER links_fts_update AFTER UPDATE ON links BEGIN UPDATE links_fts SET url = new.url, title = new.title, content = new.content, summary = new.summary WHERE rowid = new.id; END;
 
-CREATE TRIGGER links_fts_delete AFTER DELETE ON links BEGIN
-    DELETE FROM links_fts WHERE rowid = old.id;
-END;
+CREATE TRIGGER links_fts_delete AFTER DELETE ON links BEGIN DELETE FROM links_fts WHERE rowid = old.id; END;
 
--- +goose Down
++goose Down
 DROP TRIGGER IF EXISTS links_fts_delete;
 DROP TRIGGER IF EXISTS links_fts_update;
 DROP TRIGGER IF EXISTS links_fts_insert;

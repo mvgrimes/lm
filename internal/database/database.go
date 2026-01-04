@@ -22,6 +22,8 @@ type Database struct {
 }
 
 func New(dbPath string) *Database {
+	slog.Debug("Opening database", "path", dbPath)
+
 	conn, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		slog.Error("failed to open database", "error", err)

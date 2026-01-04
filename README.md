@@ -58,6 +58,8 @@ Simply run the application to start the TUI:
 ./lk
 ```
 
+**Note**: The application requires an interactive terminal. If you see a TTY error, make sure you're running it directly in your terminal, not through a script or non-interactive session.
+
 ### Navigation
 
 - Use **arrow keys** or **j/k** to navigate menus and lists
