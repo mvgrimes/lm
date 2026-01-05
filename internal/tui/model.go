@@ -2,27 +2,26 @@ package tui
 
 import (
 	"context"
-	"database/sql"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"mccwk.com/lk/internal/database"
+	"mccwk.com/lk/internal/models"
 	"mccwk.com/lk/internal/services"
 )
 
-type Mode int
+type Tab int
 
 const (
-	ModeMenu Mode = iota
-	ModeAddLink
-	ModeTasks
-	ModeReadLater
-	ModeRemember
-	ModeSearch
+	TabLinks Tab = iota
+	TabTasks
+	TabReadLater
+	TabTags
+	TabCategories
 )
 
 type Model struct {
-	mode       Mode
+	currentTab Tab
 	db         *database.Database
 	ctx        context.Context
 	fetcher    *services.Fetcher
@@ -31,13 +30,16 @@ type Model struct {
 	width      int
 	height     int
 
-	// Sub-models for each mode
-	menuModel      MenuModel
-	addLinkModel   AddLinkModel
-	tasksModel     TasksModel
-	readLaterModel ReadLaterModel
-	rememberModel  RememberModel
-	searchModel    SearchModel
+	// Tab models
+	linksModel      LinksModel
+	tasksModel      TasksModel
+	readLaterModel  ReadLaterModel
+	tagsModel       TagsModel
+	categoriesModel CategoriesModel
+
+	// Add link modal
+	addLinkModel     AddLinkModel
+	showAddLinkModal bool
 
 	err error
 }
@@ -49,117 +51,136 @@ func NewModel(db *database.Database, apiKey string) Model {
 	}
 
 	return Model{
-		mode:       ModeMenu,
-		db:         db,
-		ctx:        context.Background(),
-		fetcher:    services.NewFetcher(),
-		extractor:  services.NewExtractor(),
-		summarizer: summarizer,
-		menuModel:  NewMenuModel(),
+		currentTab:      TabLinks,
+		db:              db,
+		ctx:             context.Background(),
+		fetcher:         services.NewFetcher(),
+		extractor:       services.NewExtractor(),
+		summarizer:      summarizer,
+		linksModel:      NewLinksModel(db),
+		tagsModel:       NewTagsModel(db),
+		categoriesModel: NewCategoriesModel(db),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		m.linksModel.Init(),
+		m.tagsModel.Init(),
+		m.categoriesModel.Init(),
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// If add link modal is showing, delegate to it first
+	if m.showAddLinkModal {
+		return m.updateAddLinkModal(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			if m.mode == ModeMenu {
-				return m, tea.Quit
+		case "ctrl+c":
+			return m, tea.Quit
+
+		case "ctrl+a":
+			// Show add link modal
+			m.showAddLinkModal = true
+			m.addLinkModel = NewAddLinkModel()
+			m.addLinkModel.width = m.width
+			m.addLinkModel.height = m.height
+			return m, func() tea.Msg {
+				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
 			}
-			// Go back to menu from any other mode
-			m.mode = ModeMenu
-			m.err = nil
-			return m, nil
+
+		case "ctrl+n":
+			// Next tab
+			m.currentTab = (m.currentTab + 1) % 5
+			return m, m.loadTabData()
+
+		case "ctrl+p":
+			// Previous tab
+			m.currentTab = (m.currentTab - 1 + 5) % 5
+			return m, m.loadTabData()
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m, nil
-
-	case modeChangeMsg:
-		m.mode = msg.mode
-		m.err = nil
-
-		// Initialize sub-models when switching modes
-		switch m.mode {
-		case ModeAddLink:
-			m.addLinkModel = NewAddLinkModel()
-		case ModeTasks:
-			return m, m.loadTasks()
-		case ModeReadLater:
-			return m, m.loadReadLater()
-		case ModeRemember:
-			return m, m.loadRemember()
-		case ModeSearch:
-			m.searchModel = NewSearchModel()
-		}
-		return m, nil
+		// Update all sub-models with dimensions
+		m.tasksModel.width = m.width
+		m.tasksModel.height = m.height
+		m.linksModel.width = m.width
+		m.linksModel.height = m.height
+		m.readLaterModel.width = m.width
+		m.readLaterModel.height = m.height
+		m.tagsModel.width = m.width
+		m.tagsModel.height = m.height
+		m.categoriesModel.width = m.width
+		m.categoriesModel.height = m.height
+		// Fall through to pass message to current tab's model
 
 	case tasksLoadedMsg:
 		m.tasksModel = NewTasksModel(msg.tasks, m.db)
+		m.tasksModel.SetServices(m.fetcher, m.extractor, m.summarizer)
+		// Preserve width and height
+		m.tasksModel.width = m.width
+		m.tasksModel.height = m.height
 		return m, nil
 
 	case linksLoadedMsg:
-		if m.mode == ModeReadLater {
+		if m.currentTab == TabReadLater {
 			m.readLaterModel = NewReadLaterModel(msg.links)
-		} else if m.mode == ModeRemember {
-			m.rememberModel = NewRememberModel(msg.links, m.db)
 		}
-		return m, nil
+		// Don't return here, let it fall through to LinksModel too
+		// so it can handle its own linksLoadedMsg
 
 	case errMsg:
 		m.err = msg.err
 		return m, nil
 	}
 
-	// Delegate to sub-models based on current mode
-	switch m.mode {
-	case ModeMenu:
-		newModel, cmd := m.menuModel.Update(msg)
-		m.menuModel = newModel
-
-		// Handle mode selection from menu
-		if m.menuModel.selected >= 0 {
-			newMode := Mode(m.menuModel.selected)
-			m.menuModel.selected = -1
-			return m.Update(modeChangeMsg{mode: newMode})
-		}
-
-		return m, cmd
-
-	case ModeAddLink:
-		newModel, cmd := m.addLinkModel.Update(msg, m.db, m.fetcher, m.extractor, m.summarizer, m.ctx)
-		m.addLinkModel = newModel
-		return m, cmd
-
-	case ModeTasks:
-		newModel, cmd := m.tasksModel.Update(msg)
-		m.tasksModel = newModel
-		return m, cmd
-
-	case ModeReadLater:
-		newModel, cmd := m.readLaterModel.Update(msg)
-		m.readLaterModel = newModel
-		return m, cmd
-
-	case ModeRemember:
-		newModel, cmd := m.rememberModel.Update(msg)
-		m.rememberModel = newModel
-		return m, cmd
-
-	case ModeSearch:
-		newModel, cmd := m.searchModel.Update(msg, m.db, m.ctx)
-		m.searchModel = newModel
-		return m, cmd
+	// Delegate to current tab's model
+	var cmd tea.Cmd
+	switch m.currentTab {
+	case TabLinks:
+		m.linksModel, cmd = m.linksModel.Update(msg)
+	case TabTasks:
+		m.tasksModel, cmd = m.tasksModel.Update(msg)
+	case TabReadLater:
+		m.readLaterModel, cmd = m.readLaterModel.Update(msg)
+	case TabTags:
+		m.tagsModel, cmd = m.tagsModel.Update(msg)
+	case TabCategories:
+		m.categoriesModel, cmd = m.categoriesModel.Update(msg)
 	}
 
-	return m, nil
+	return m, cmd
+}
+
+func (m Model) updateAddLinkModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			m.showAddLinkModal = false
+			return m, nil
+		}
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+
+	case linkProcessCompleteMsg:
+		m.showAddLinkModal = false
+		// Reload current tab data
+		return m, m.loadTabData()
+
+	case linkProcessErrorMsg:
+		// Keep modal open to show error
+	}
+
+	var cmd tea.Cmd
+	m.addLinkModel, cmd = m.addLinkModel.Update(msg, m.db, m.fetcher, m.extractor, m.summarizer, m.ctx)
+	return m, cmd
 }
 
 func (m Model) View() string {
@@ -167,21 +188,82 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	var content string
+	// If add link modal is showing, render it on top
+	if m.showAddLinkModal {
+		return m.renderAddLinkModal()
+	}
 
-	switch m.mode {
-	case ModeMenu:
-		content = m.menuModel.View()
-	case ModeAddLink:
-		content = m.addLinkModel.View()
-	case ModeTasks:
+	// Render tabs and current content
+	return m.renderTabs() + "\n" + m.renderCurrentTab()
+}
+
+func (m Model) renderTabs() string {
+	tabs := []string{"Links", "Tasks", "Read Later", "Tags", "Categories"}
+
+	var renderedTabs []string
+	for i, tab := range tabs {
+		tabStyle := lipgloss.NewStyle().
+			Padding(0, 3)
+
+		if Tab(i) == m.currentTab {
+			// Active tab
+			tabStyle = tabStyle.
+				Bold(true).
+				Foreground(lipgloss.Color("10")).
+				Background(lipgloss.Color("236")).
+				Border(lipgloss.RoundedBorder(), true, true, false, false).
+				BorderForeground(lipgloss.Color("10"))
+		} else {
+			// Inactive tab
+			tabStyle = tabStyle.
+				Foreground(lipgloss.Color("243")).
+				Border(lipgloss.RoundedBorder(), true, true, false, false).
+				BorderForeground(lipgloss.Color("237"))
+		}
+
+		renderedTabs = append(renderedTabs, tabStyle.Render(tab))
+	}
+
+	// Title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("6")).
+		Padding(0, 2)
+
+	title := titleStyle.Render("LK · Link Manager")
+
+	// Join tabs
+	tabBar := lipgloss.JoinHorizontal(lipgloss.Bottom, renderedTabs...)
+
+	// Combine title and tabs
+	header := lipgloss.JoinVertical(lipgloss.Left, title, tabBar)
+
+	// Add separator line
+	separator := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("237")).
+		Width(m.width).
+		Render(lipgloss.Border{}.Top)
+
+	return header + "\n" + separator
+}
+
+func (m Model) renderCurrentTab() string {
+	// Calculate available height for tab content
+	// Account for: title(1) + tabs(3) + separator(1) + footer(2) = 7
+	availableHeight := m.height - 7
+
+	var content string
+	switch m.currentTab {
+	case TabLinks:
+		content = m.linksModel.View()
+	case TabTasks:
 		content = m.tasksModel.View()
-	case ModeReadLater:
+	case TabReadLater:
 		content = m.readLaterModel.View()
-	case ModeRemember:
-		content = m.rememberModel.View()
-	case ModeSearch:
-		content = m.searchModel.View()
+	case TabTags:
+		content = m.tagsModel.View()
+	case TabCategories:
+		content = m.categoriesModel.View()
 	}
 
 	// Show error if any
@@ -193,24 +275,91 @@ func (m Model) View() string {
 	}
 
 	// Add footer with help text
-	footer := lipgloss.NewStyle().
+	footer := "\n" + lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render("Press 'q' to go back • Ctrl+C to quit")
+		Render("Ctrl+A: add link • Ctrl+[/]: prev/next tab • Ctrl+C: quit")
 
-	return lipgloss.JoinVertical(lipgloss.Left, content, "\n"+footer)
+	// Ensure content doesn't exceed available height
+	contentStyle := lipgloss.NewStyle().
+		MaxHeight(availableHeight)
+
+	return contentStyle.Render(content) + footer
+}
+
+func (m Model) renderAddLinkModal() string {
+	// Create a compact modal that fits on screen
+	modalWidth := m.width - 10
+	if modalWidth > 100 {
+		modalWidth = 100
+	}
+	if modalWidth < 60 {
+		modalWidth = 60
+	}
+
+	modalHeight := m.height - 10
+	if modalHeight < 20 {
+		modalHeight = 20
+	}
+
+	// Get modal content from addLinkModel
+	modalContent := m.addLinkModel.ViewModal(modalWidth, modalHeight)
+
+	// Style the modal
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(1).
+		Width(modalWidth).
+		MaxHeight(modalHeight)
+
+	modal := modalStyle.Render(modalContent)
+
+	// Position modal in center of screen
+	verticalPadding := (m.height - lipgloss.Height(modal)) / 2
+	if verticalPadding < 0 {
+		verticalPadding = 0
+	}
+
+	horizontalPadding := (m.width - modalWidth) / 2
+	if horizontalPadding < 0 {
+		horizontalPadding = 0
+	}
+
+	// Add padding to center the modal
+	centeredModal := lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+	)
+
+	return centeredModal
+}
+
+func (m Model) loadTabData() tea.Cmd {
+	switch m.currentTab {
+	case TabLinks:
+		return m.linksModel.loadLinks()
+	case TabTasks:
+		return m.loadTasks()
+	case TabReadLater:
+		return m.loadReadLater()
+	case TabTags:
+		return m.tagsModel.loadTags()
+	case TabCategories:
+		return m.categoriesModel.loadCategories()
+	}
+	return nil
 }
 
 // Messages
 type modeChangeMsg struct {
-	mode Mode
-}
-
-type tasksLoadedMsg struct {
-	tasks []sql.NullString // Placeholder - will use proper Task type
+	mode int
 }
 
 type linksLoadedMsg struct {
-	links []sql.NullString // Placeholder - will use proper Link type
+	links []models.Link
 }
 
 type errMsg struct {
@@ -220,21 +369,24 @@ type errMsg struct {
 // Helper commands to load data
 func (m Model) loadTasks() tea.Cmd {
 	return func() tea.Msg {
-		// TODO: Load tasks from database
-		return tasksLoadedMsg{tasks: []sql.NullString{}}
+		tasks, err := m.db.Queries.ListTasks(context.Background())
+		if err != nil {
+			return errMsg{err: err}
+		}
+		return tasksLoadedMsg{tasks: tasks}
 	}
 }
 
 func (m Model) loadReadLater() tea.Cmd {
 	return func() tea.Msg {
-		// TODO: Load read later links from database
-		return linksLoadedMsg{links: []sql.NullString{}}
-	}
-}
-
-func (m Model) loadRemember() tea.Cmd {
-	return func() tea.Msg {
-		// TODO: Load remember links from database
-		return linksLoadedMsg{links: []sql.NullString{}}
+		links, err := m.db.Queries.ListLinksByStatus(context.Background(), models.ListLinksByStatusParams{
+			Status: "read_later",
+			Limit:  100,
+			Offset: 0,
+		})
+		if err != nil {
+			return errMsg{err: err}
+		}
+		return linksLoadedMsg{links: links}
 	}
 }

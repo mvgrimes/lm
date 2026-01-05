@@ -54,7 +54,8 @@ func (e *Extractor) ExtractText(html string) (title string, text string, err err
 	// Join all text parts
 	text = strings.Join(textParts, "\n\n")
 
-	// Clean up extra whitespace
+	// Clean up extra whitespace and collapse to readable format
+	text = e.CollapseWhitespace(text)
 	text = strings.TrimSpace(text)
 
 	return title, text, nil
@@ -74,4 +75,22 @@ func (e *Extractor) TruncateText(text string, maxLength int) string {
 	}
 
 	return truncated + "..."
+}
+
+// CollapseWhitespace reduces multiple whitespace to single spaces while preserving paragraphs
+func (e *Extractor) CollapseWhitespace(text string) string {
+	// Split into paragraphs (separated by multiple newlines)
+	paragraphs := strings.Split(text, "\n\n")
+
+	var cleaned []string
+	for _, para := range paragraphs {
+		// For each paragraph, collapse all whitespace to single spaces
+		fields := strings.Fields(para) // Splits on any whitespace
+		if len(fields) > 0 {
+			cleaned = append(cleaned, strings.Join(fields, " "))
+		}
+	}
+
+	// Join paragraphs with single empty line (two newlines)
+	return strings.Join(cleaned, "\n\n")
 }
