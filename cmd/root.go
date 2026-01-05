@@ -50,7 +50,8 @@ func init() {
 }
 
 func setupLogging() {
-	level := slog.LevelInfo
+	// level := slog.LevelInfo
+	level := slog.LevelDebug
 	if debug {
 		level = slog.LevelDebug
 	}

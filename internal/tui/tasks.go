@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pkg/browser"
@@ -44,6 +46,10 @@ type TasksModel struct {
 
 	// Add link mode - use the AddLinkModel as a dialog
 	addLinkModel AddLinkModel
+
+	// Detail view for links
+	detailViewport viewport.Model
+	viewportReady  bool
 
 	message string
 	width   int
@@ -84,6 +90,30 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		// Calculate responsive widths for split view
+		leftWidth := int(float64(m.width) * 0.35)
+		if leftWidth < 30 {
+			leftWidth = 30
+		}
+		rightWidth := m.width - leftWidth - 8
+
+		// Calculate height for detail viewport
+		detailHeight := m.height - 12
+		if detailHeight < 5 {
+			detailHeight = 5
+		}
+
+		// Initialize or update detail viewport
+		if !m.viewportReady {
+			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
+			m.detailViewport.SetContent("")
+			m.viewportReady = true
+		} else {
+			m.detailViewport.Width = rightWidth - 4
+			m.detailViewport.Height = detailHeight
+		}
+
 		// Forward to add link model if active
 		if m.mode == tasksAddLinkMode {
 			m.addLinkModel, cmd = m.addLinkModel.Update(msg, m.db, m.fetcher, m.extractor, m.summarizer, m.ctx)
@@ -131,6 +161,10 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 
 	case tasksLoadedMsg:
 		m.tasks = msg.tasks
+		// Automatically load links for the first task
+		if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
+			return m, m.loadTaskLinks(m.tasks[m.cursor].ID)
+		}
 		return m, nil
 
 	case taskCreatedMsg:
@@ -153,16 +187,18 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
-			m.showLinks = false
+			// Automatically load links for the newly selected task
+			if len(m.tasks) > 0 {
+				return m, m.loadTaskLinks(m.tasks[m.cursor].ID)
+			}
 		}
 	case "down", "j":
 		if m.cursor < len(m.tasks)-1 {
 			m.cursor++
-			m.showLinks = false
-		}
-	case "enter":
-		if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
-			return m, m.loadTaskLinks(m.tasks[m.cursor].ID)
+			// Automatically load links for the newly selected task
+			if len(m.tasks) > 0 {
+				return m, m.loadTaskLinks(m.tasks[m.cursor].ID)
+			}
 		}
 	case "o":
 		// Open all links for current task
@@ -194,6 +230,13 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 		if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
 			task := m.tasks[m.cursor]
 			return m, m.toggleTaskCompletion(task.ID, !task.Completed)
+		}
+	case "pgup", "pgdown":
+		// Scroll detail viewport
+		if m.viewportReady && m.showLinks {
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -279,28 +322,67 @@ func (m TasksModel) View() string {
 }
 
 func (m TasksModel) viewTasks() string {
+	if m.width == 0 {
+		return "Loading..."
+	}
+
+	// Calculate responsive widths
+	leftWidth := int(float64(m.width) * 0.35)
+	if leftWidth < 30 {
+		leftWidth = 30
+	}
+	rightWidth := m.width - leftWidth - 8
+
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("6")).
-		MarginBottom(1)
+		Foreground(lipgloss.Color("6"))
 
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("10")).
 		Bold(true)
 
+	dimStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("243"))
+
 	messageStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("10"))
 
-	s := titleStyle.Render("Tasks") + "\n\n"
+	// Left panel - task list
+	leftPanelStyle := lipgloss.NewStyle().
+		Width(leftWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("8")).
+		Padding(1)
+
+	var leftContent strings.Builder
+	leftContent.WriteString(titleStyle.Render("Tasks") + "\n\n")
 
 	if m.message != "" {
-		s += messageStyle.Render(m.message) + "\n\n"
+		leftContent.WriteString(messageStyle.Render(m.message) + "\n\n")
 	}
 
 	if len(m.tasks) == 0 {
-		s += "No tasks yet. Press 'n' to create one!\n"
+		leftContent.WriteString(dimStyle.Render("No tasks yet. Press 'n' to create one!\n"))
 	} else {
-		for i, task := range m.tasks {
+		// Show tasks list with scrolling
+		maxTasks := m.height - 15
+		if maxTasks < 3 {
+			maxTasks = 3
+		}
+
+		startIdx := 0
+		endIdx := len(m.tasks)
+
+		// Ensure cursor is visible
+		if m.cursor >= maxTasks {
+			startIdx = m.cursor - maxTasks + 1
+		}
+		if endIdx > startIdx+maxTasks {
+			endIdx = startIdx + maxTasks
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			task := m.tasks[i]
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "• "
@@ -311,37 +393,112 @@ func (m TasksModel) viewTasks() string {
 				status = "[✓]"
 			}
 
-			line := fmt.Sprintf("%s%s %s", cursor, status, task.Name)
+			taskName := task.Name
+			// Truncate task name to fit
+			if len(taskName) > leftWidth-10 {
+				taskName = taskName[:leftWidth-13] + "..."
+			}
+
+			line := fmt.Sprintf("%s%s %s", cursor, status, taskName)
 
 			if i == m.cursor {
-				s += selectedStyle.Render(line) + "\n"
-			} else {
-				s += line + "\n"
-			}
-		}
-	}
-
-	if m.showLinks {
-		s += "\n" + lipgloss.NewStyle().Bold(true).Render("Links:") + "\n"
-		if len(m.links) == 0 {
-			s += "  No links yet. Press 'a' to add a link.\n"
-		} else {
-			for _, link := range m.links {
-				title := link.Title.String
-				if title == "" {
-					title = link.Url
+				leftContent.WriteString(selectedStyle.Render(line) + "\n")
+				// Show description if available
+				if task.Description.Valid && task.Description.String != "" {
+					desc := task.Description.String
+					if len(desc) > leftWidth-8 {
+						desc = desc[:leftWidth-11] + "..."
+					}
+					leftContent.WriteString(dimStyle.Render("  "+desc) + "\n")
 				}
-				s += fmt.Sprintf("  • %s\n", title)
+			} else {
+				leftContent.WriteString(line + "\n")
 			}
-			s += "\nPress 'o' to open all links in browser"
+		}
+
+		// Show scroll indicator
+		if len(m.tasks) > maxTasks {
+			leftContent.WriteString("\n" + dimStyle.Render(fmt.Sprintf("  [%d/%d tasks]", m.cursor+1, len(m.tasks))))
 		}
 	}
 
-	s += "\n\n" + lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("n: new task • a: add link • c: toggle complete • Enter: view links • arrows/j/k: navigate")
+	leftPanel := leftPanelStyle.Render(leftContent.String())
 
-	return s
+	// Right panel - links for selected task
+	rightPanelStyle := lipgloss.NewStyle().
+		Width(rightWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(1)
+
+	var rightContent string
+
+	if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
+		task := m.tasks[m.cursor]
+
+		var rightBuilder strings.Builder
+		rightBuilder.WriteString(titleStyle.Render("Links for: "+task.Name) + "\n\n")
+
+		if m.showLinks {
+			if len(m.links) == 0 {
+				rightBuilder.WriteString(dimStyle.Render("No links yet. Press 'a' to add a link."))
+			} else {
+				// Build content for viewport
+				var detailContent strings.Builder
+				for _, link := range m.links {
+					title := link.Title.String
+					if title == "" {
+						title = link.Url
+					}
+					detailContent.WriteString(fmt.Sprintf("• %s\n", title))
+
+					// Show URL in dim style
+					detailContent.WriteString(dimStyle.Render("  "+link.Url) + "\n")
+
+					// Show summary if available
+					if link.Summary.Valid && link.Summary.String != "" {
+						summary := link.Summary.String
+						wrapped := wrapText(summary, rightWidth-6)
+						detailContent.WriteString(dimStyle.Render("  "+wrapped) + "\n")
+					}
+					detailContent.WriteString("\n")
+				}
+
+				if m.viewportReady {
+					m.detailViewport.SetContent(detailContent.String())
+					rightBuilder.WriteString(m.detailViewport.View())
+
+					// Show scroll indicator
+					if m.detailViewport.TotalLineCount() > m.detailViewport.Height {
+						scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
+						scrollInfo := dimStyle.Render(fmt.Sprintf("\n[%d%% - PgUp/PgDn to scroll]", scrollPercent))
+						rightBuilder.WriteString(scrollInfo)
+					}
+				} else {
+					rightBuilder.WriteString(detailContent.String())
+				}
+
+				rightBuilder.WriteString("\n\n" + dimStyle.Render("Press 'o' to open all links"))
+			}
+		} else {
+			rightBuilder.WriteString(dimStyle.Render("Loading links..."))
+		}
+
+		rightContent = rightBuilder.String()
+	} else {
+		rightContent = dimStyle.Render("Select a task to view its links...")
+	}
+
+	rightPanel := rightPanelStyle.Render(rightContent)
+
+	// Combine panels
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
+
+	// Help text
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpText := "\n" + helpStyle.Render("n: new task • a: add link • c: toggle complete • o: open links • arrows/j/k: navigate • PgUp/PgDn: scroll")
+
+	return mainContent + helpText
 }
 
 func (m TasksModel) viewCreateTask() string {
