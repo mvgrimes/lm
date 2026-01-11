@@ -27,8 +27,12 @@ func (f *Fetcher) FetchURL(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set a user agent to avoid being blocked
+	// Set headers to avoid compression/decompression issues
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; LinkManager/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	// Force identity to avoid servers sending gzip/br that some setups mislabel
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	resp, err := f.client.Do(req)
 	if err != nil {
