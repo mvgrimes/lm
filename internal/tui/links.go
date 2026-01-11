@@ -13,6 +13,7 @@ import (
 
 	"mccwk.com/lk/internal/database"
 	"mccwk.com/lk/internal/models"
+	"mccwk.com/lk/internal/services"
 )
 
 type LinksModel struct {
@@ -30,6 +31,15 @@ type LinksModel struct {
 	detailViewport viewport.Model
 	viewportReady  bool
 
+	// Edit mode
+	editMode      bool
+	editLinkModel EditLinkModel
+
+	// Services for edit dialog
+	fetcher    *services.Fetcher
+	extractor  *services.Extractor
+	summarizer *services.Summarizer
+
 	width  int
 	height int
 }
@@ -46,6 +56,12 @@ func NewLinksModel(db *database.Database) LinksModel {
 		searchInput:   searchInput,
 		searchFocused: false,
 	}
+}
+
+func (m *LinksModel) SetServices(fetcher *services.Fetcher, extractor *services.Extractor, summarizer *services.Summarizer) {
+	m.fetcher = fetcher
+	m.extractor = extractor
+	m.summarizer = summarizer
 }
 
 func (m LinksModel) Init() tea.Cmd {
@@ -87,6 +103,16 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// If in edit mode, delegate to editLinkModel
+		if m.editMode {
+			if msg.String() == "esc" {
+				m.editMode = false
+				return m, m.loadLinks() // Reload links to show any changes
+			}
+			m.editLinkModel, cmd = m.editLinkModel.Update(msg)
+			return m, cmd
+		}
+
 		// Handle search focus toggle
 		if msg.String() == "/" && !m.searchFocused {
 			m.searchFocused = true
@@ -134,6 +160,40 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 				return m, m.deleteLink(m.filteredLinks[m.cursor].ID)
 			}
+		case "e":
+			// Edit link
+			if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+				m.editMode = true
+				m.editLinkModel = NewEditLinkModel(
+					m.filteredLinks[m.cursor],
+					m.db,
+					m.ctx,
+					m.fetcher,
+					m.extractor,
+					m.summarizer,
+				)
+				// Load existing categories and tags for the link
+				categories, _ := m.db.Queries.GetCategoriesForLink(m.ctx, m.filteredLinks[m.cursor].ID)
+				if len(categories) > 0 {
+					catNames := []string{}
+					for _, cat := range categories {
+						catNames = append(catNames, cat.Name)
+					}
+					m.editLinkModel.categoryInput.SetValue(strings.Join(catNames, ", "))
+				}
+				tags, _ := m.db.Queries.GetTagsForLink(m.ctx, m.filteredLinks[m.cursor].ID)
+				if len(tags) > 0 {
+					tagNames := []string{}
+					for _, tag := range tags {
+						tagNames = append(tagNames, tag.Name)
+					}
+					m.editLinkModel.tagsInput.SetValue(strings.Join(tagNames, ", "))
+				}
+				// Send window size to initialize
+				return m, func() tea.Msg {
+					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+				}
+			}
 		case "pgup", "pgdown":
 			// Scroll detail viewport
 			if m.viewportReady {
@@ -152,12 +212,50 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 
 	case linkDeletedMsg:
 		return m, m.loadLinks()
+	default:
+		if m.editMode {
+			m.editLinkModel, cmd = m.editLinkModel.Update(msg)
+			return m, cmd
+		}
 	}
 
 	return m, nil
 }
 
 func (m LinksModel) View() string {
+	// Show edit dialog if in edit mode
+	if m.editMode {
+		modalWidth := m.width - 20
+		if modalWidth > 80 {
+			modalWidth = 80
+		}
+		if modalWidth < 60 {
+			modalWidth = 60
+		}
+
+		modalContent := m.editLinkModel.View()
+
+		// Style the modal
+		modalStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("10")).
+			Padding(2).
+			Width(modalWidth)
+
+		modal := modalStyle.Render(modalContent)
+
+		// Center the modal
+		centeredModal := lipgloss.Place(
+			m.width,
+			m.height,
+			lipgloss.Center,
+			lipgloss.Center,
+			modal,
+		)
+
+		return centeredModal
+	}
+
 	if m.width == 0 {
 		return "Loading..."
 	}
@@ -249,16 +347,17 @@ func (m LinksModel) View() string {
 
 			if i == m.cursor {
 				leftContent += selectedStyle.Render(line) + "\n"
-				// Show short summary
-				if link.Summary.Valid && link.Summary.String != "" {
-					summary := link.Summary.String
-					if len(summary) > leftWidth-8 {
-						summary = summary[:leftWidth-11] + "..."
-					}
-					leftContent += dimStyle.Render("  "+summary) + "\n"
-				}
 			} else {
 				leftContent += line + "\n"
+			}
+
+			// Show short summary for all items
+			if link.Summary.Valid && link.Summary.String != "" {
+				summary := link.Summary.String
+				if len(summary) > leftWidth-8 {
+					summary = summary[:leftWidth-11] + "..."
+				}
+				leftContent += dimStyle.Render("  "+summary) + "\n"
 			}
 		}
 
@@ -309,7 +408,7 @@ func (m LinksModel) View() string {
 
 	// Help text
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpText := "\n" + helpStyle.Render("/: search • arrows/j/k: navigate • Enter/o: open • d: delete • PgUp/PgDn: scroll details")
+	helpText := "\n" + helpStyle.Render("/: search • arrows/j/k: navigate • Enter/o: open • e: edit • d: delete • PgUp/PgDn: scroll details")
 
 	return mainContent + helpText
 }
@@ -406,7 +505,10 @@ func (m *LinksModel) updateDetailView() {
 	if link.Content.Valid && link.Content.String != "" {
 		contentStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("7"))
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Content:") + "\n")
+		contentLabelStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("11")) // Yellow color
+		content.WriteString(contentLabelStyle.Render("Content:") + "\n")
 		wrapped := wrapText(link.Content.String, wrapWidth)
 		content.WriteString(contentStyle.Render(wrapped))
 	}

@@ -403,16 +403,17 @@ func (m TasksModel) viewTasks() string {
 
 			if i == m.cursor {
 				leftContent.WriteString(selectedStyle.Render(line) + "\n")
-				// Show description if available
-				if task.Description.Valid && task.Description.String != "" {
-					desc := task.Description.String
-					if len(desc) > leftWidth-8 {
-						desc = desc[:leftWidth-11] + "..."
-					}
-					leftContent.WriteString(dimStyle.Render("  "+desc) + "\n")
-				}
 			} else {
 				leftContent.WriteString(line + "\n")
+			}
+
+			// Show description for all tasks
+			if task.Description.Valid && task.Description.String != "" {
+				desc := task.Description.String
+				if len(desc) > leftWidth-8 {
+					desc = desc[:leftWidth-11] + "..."
+				}
+				leftContent.WriteString(dimStyle.Render("  "+desc) + "\n")
 			}
 		}
 

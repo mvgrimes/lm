@@ -672,6 +672,20 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 
 func (m AddLinkModel) processLink(url string, db *database.Database, fetcher *services.Fetcher, extractor *services.Extractor, summarizer *services.Summarizer, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
+		// Check if link already exists
+		existingLink, err := db.Queries.GetLinkByURL(ctx, url)
+		if err == nil {
+			// Link exists, return it
+			return linkProcessCompleteMsg{
+				linkID:   existingLink.ID,
+				preview:  existingLink.Content.String,
+				summary:  existingLink.Summary.String,
+				category: "", // We don't store category directly on link
+				tags:     []string{},
+			}
+		}
+
+		// Link doesn't exist, create it
 		// Fetch the URL
 		html, err := fetcher.FetchURL(ctx, url)
 		if err != nil {

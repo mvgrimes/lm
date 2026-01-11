@@ -104,6 +104,10 @@ RETURNING *;
 SELECT * FROM categories
 WHERE id = ?;
 
+-- name: GetCategoryByName :one
+SELECT * FROM categories
+WHERE name = ?;
+
 -- name: ListCategories :many
 SELECT * FROM categories
 ORDER BY name;

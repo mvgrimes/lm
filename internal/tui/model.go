@@ -50,14 +50,20 @@ func NewModel(db *database.Database, apiKey string) Model {
 		summarizer = services.NewSummarizer(apiKey)
 	}
 
+	fetcher := services.NewFetcher()
+	extractor := services.NewExtractor()
+
+	linksModel := NewLinksModel(db)
+	linksModel.SetServices(fetcher, extractor, summarizer)
+
 	return Model{
 		currentTab:      TabLinks,
 		db:              db,
 		ctx:             context.Background(),
-		fetcher:         services.NewFetcher(),
-		extractor:       services.NewExtractor(),
+		fetcher:         fetcher,
+		extractor:       extractor,
 		summarizer:      summarizer,
-		linksModel:      NewLinksModel(db),
+		linksModel:      linksModel,
 		tagsModel:       NewTagsModel(db),
 		categoriesModel: NewCategoriesModel(db),
 	}
@@ -159,6 +165,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAddLinkModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var extraCmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "esc" {
@@ -170,9 +178,8 @@ func (m Model) updateAddLinkModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case linkProcessCompleteMsg:
-		m.showAddLinkModal = false
-		// Reload current tab data
-		return m, m.loadTabData()
+		// Keep modal open to show success state, but refresh data in background
+		extraCmd = m.loadTabData()
 
 	case linkProcessErrorMsg:
 		// Keep modal open to show error
@@ -180,6 +187,9 @@ func (m Model) updateAddLinkModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.addLinkModel, cmd = m.addLinkModel.Update(msg, m.db, m.fetcher, m.extractor, m.summarizer, m.ctx)
+	if extraCmd != nil {
+		return m, tea.Batch(cmd, extraCmd)
+	}
 	return m, cmd
 }
 
@@ -277,7 +287,7 @@ func (m Model) renderCurrentTab() string {
 	// Add footer with help text
 	footer := "\n" + lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render("Ctrl+A: add link • Ctrl+[/]: prev/next tab • Ctrl+C: quit")
+		Render("Ctrl+A: add link • Ctrl+N/P: prev/next tab • Ctrl+C: quit")
 
 	// Ensure content doesn't exceed available height
 	contentStyle := lipgloss.NewStyle().
