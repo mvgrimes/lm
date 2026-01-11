@@ -37,6 +37,15 @@ CREATE TABLE tags (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Create activities table
+CREATE TABLE activities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create link_tasks junction table (many-to-many)
 CREATE TABLE link_tasks (
     link_id INTEGER NOT NULL,
@@ -67,6 +76,16 @@ CREATE TABLE link_tags (
     FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
 
+-- Create link_activities junction table (many-to-many)
+CREATE TABLE link_activities (
+    link_id INTEGER NOT NULL,
+    activity_id INTEGER NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (link_id, activity_id),
+    FOREIGN KEY (link_id) REFERENCES links(id) ON DELETE CASCADE,
+    FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
+);
+
 -- Create indexes for better query performance
 CREATE INDEX idx_links_status ON links(status);
 CREATE INDEX idx_links_created_at ON links(created_at DESC);
@@ -74,6 +93,7 @@ CREATE INDEX idx_tasks_completed ON tasks(completed);
 CREATE INDEX idx_link_tasks_task_id ON link_tasks(task_id);
 CREATE INDEX idx_link_categories_category_id ON link_categories(category_id);
 CREATE INDEX idx_link_tags_tag_id ON link_tags(tag_id);
+CREATE INDEX idx_link_activities_activity_id ON link_activities(activity_id);
 
 -- Create full-text search virtual table for links
 CREATE VIRTUAL TABLE links_fts USING fts5(

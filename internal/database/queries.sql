@@ -196,3 +196,45 @@ SELECT t.* FROM tags t
 JOIN link_tags lt ON t.id = lt.tag_id
 WHERE lt.link_id = ?
 ORDER BY t.name;
+
+-- Activities
+-- name: CreateActivity :one
+INSERT INTO activities (name, description)
+VALUES (?, ?)
+RETURNING *;
+
+-- name: GetActivity :one
+SELECT * FROM activities WHERE id = ?;
+
+-- name: ListActivities :many
+SELECT * FROM activities
+ORDER BY created_at DESC;
+
+-- name: UpdateActivity :one
+UPDATE activities
+SET name = ?,
+    description = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteActivity :exec
+DELETE FROM activities WHERE id = ?;
+
+-- name: LinkActivity :exec
+INSERT INTO link_activities (link_id, activity_id) VALUES (?, ?);
+
+-- name: UnlinkActivity :exec
+DELETE FROM link_activities WHERE link_id = ? AND activity_id = ?;
+
+-- name: GetLinksForActivity :many
+SELECT l.* FROM links l
+JOIN link_activities la ON l.id = la.link_id
+WHERE la.activity_id = ?
+ORDER BY l.created_at DESC;
+
+-- name: GetActivitiesForLink :many
+SELECT a.* FROM activities a
+JOIN link_activities la ON a.id = la.activity_id
+WHERE la.link_id = ?
+ORDER BY a.created_at DESC;

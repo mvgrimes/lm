@@ -22,6 +22,31 @@ func (q *Queries) CompleteTask(ctx context.Context, id int64) error {
 	return err
 }
 
+const createActivity = `-- name: CreateActivity :one
+INSERT INTO activities (name, description)
+VALUES (?, ?)
+RETURNING id, name, description, created_at, updated_at
+`
+
+type CreateActivityParams struct {
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+}
+
+// Activities
+func (q *Queries) CreateActivity(ctx context.Context, arg CreateActivityParams) (Activity, error) {
+	row := q.db.QueryRowContext(ctx, createActivity, arg.Name, arg.Description)
+	var i Activity
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createCategory = `-- name: CreateCategory :one
 INSERT INTO categories (name, description)
 VALUES (?, ?)
@@ -121,6 +146,15 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 	return i, err
 }
 
+const deleteActivity = `-- name: DeleteActivity :exec
+DELETE FROM activities WHERE id = ?
+`
+
+func (q *Queries) DeleteActivity(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteActivity, id)
+	return err
+}
+
 const deleteCategory = `-- name: DeleteCategory :exec
 DELETE FROM categories
 WHERE id = ?
@@ -159,6 +193,59 @@ WHERE id = ?
 func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteTask, id)
 	return err
+}
+
+const getActivitiesForLink = `-- name: GetActivitiesForLink :many
+SELECT a.id, a.name, a.description, a.created_at, a.updated_at FROM activities a
+JOIN link_activities la ON a.id = la.activity_id
+WHERE la.link_id = ?
+ORDER BY a.created_at DESC
+`
+
+func (q *Queries) GetActivitiesForLink(ctx context.Context, linkID int64) ([]Activity, error) {
+	rows, err := q.db.QueryContext(ctx, getActivitiesForLink, linkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Activity{}
+	for rows.Next() {
+		var i Activity
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActivity = `-- name: GetActivity :one
+SELECT id, name, description, created_at, updated_at FROM activities WHERE id = ?
+`
+
+func (q *Queries) GetActivity(ctx context.Context, id int64) (Activity, error) {
+	row := q.db.QueryRowContext(ctx, getActivity, id)
+	var i Activity
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getCategoriesForLink = `-- name: GetCategoriesForLink :many
@@ -274,6 +361,47 @@ func (q *Queries) GetLinkByURL(ctx context.Context, url string) (Link, error) {
 		&i.SummarizedAt,
 	)
 	return i, err
+}
+
+const getLinksForActivity = `-- name: GetLinksForActivity :many
+SELECT l.id, l.url, l.title, l.content, l.summary, l.status, l.created_at, l.updated_at, l.fetched_at, l.summarized_at FROM links l
+JOIN link_activities la ON l.id = la.link_id
+WHERE la.activity_id = ?
+ORDER BY l.created_at DESC
+`
+
+func (q *Queries) GetLinksForActivity(ctx context.Context, activityID int64) ([]Link, error) {
+	rows, err := q.db.QueryContext(ctx, getLinksForActivity, activityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Link{}
+	for rows.Next() {
+		var i Link
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.Title,
+			&i.Content,
+			&i.Summary,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FetchedAt,
+			&i.SummarizedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getLinksForCategory = `-- name: GetLinksForCategory :many
@@ -509,6 +637,20 @@ func (q *Queries) GetTasksForLink(ctx context.Context, linkID int64) ([]Task, er
 	return items, nil
 }
 
+const linkActivity = `-- name: LinkActivity :exec
+INSERT INTO link_activities (link_id, activity_id) VALUES (?, ?)
+`
+
+type LinkActivityParams struct {
+	LinkID     int64 `json:"link_id"`
+	ActivityID int64 `json:"activity_id"`
+}
+
+func (q *Queries) LinkActivity(ctx context.Context, arg LinkActivityParams) error {
+	_, err := q.db.ExecContext(ctx, linkActivity, arg.LinkID, arg.ActivityID)
+	return err
+}
+
 const linkCategory = `-- name: LinkCategory :exec
 INSERT INTO link_categories (link_id, category_id)
 VALUES (?, ?)
@@ -552,6 +694,40 @@ type LinkTaskParams struct {
 func (q *Queries) LinkTask(ctx context.Context, arg LinkTaskParams) error {
 	_, err := q.db.ExecContext(ctx, linkTask, arg.LinkID, arg.TaskID)
 	return err
+}
+
+const listActivities = `-- name: ListActivities :many
+SELECT id, name, description, created_at, updated_at FROM activities
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListActivities(ctx context.Context) ([]Activity, error) {
+	rows, err := q.db.QueryContext(ctx, listActivities)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Activity{}
+	for rows.Next() {
+		var i Activity
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCategories = `-- name: ListCategories :many
@@ -839,6 +1015,20 @@ func (q *Queries) SearchLinks(ctx context.Context, arg SearchLinksParams) ([]Lin
 	return items, nil
 }
 
+const unlinkActivity = `-- name: UnlinkActivity :exec
+DELETE FROM link_activities WHERE link_id = ? AND activity_id = ?
+`
+
+type UnlinkActivityParams struct {
+	LinkID     int64 `json:"link_id"`
+	ActivityID int64 `json:"activity_id"`
+}
+
+func (q *Queries) UnlinkActivity(ctx context.Context, arg UnlinkActivityParams) error {
+	_, err := q.db.ExecContext(ctx, unlinkActivity, arg.LinkID, arg.ActivityID)
+	return err
+}
+
 const unlinkCategory = `-- name: UnlinkCategory :exec
 DELETE FROM link_categories
 WHERE link_id = ? AND category_id = ?
@@ -882,6 +1072,34 @@ type UnlinkTaskParams struct {
 func (q *Queries) UnlinkTask(ctx context.Context, arg UnlinkTaskParams) error {
 	_, err := q.db.ExecContext(ctx, unlinkTask, arg.LinkID, arg.TaskID)
 	return err
+}
+
+const updateActivity = `-- name: UpdateActivity :one
+UPDATE activities
+SET name = ?,
+    description = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, name, description, created_at, updated_at
+`
+
+type UpdateActivityParams struct {
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+	ID          int64          `json:"id"`
+}
+
+func (q *Queries) UpdateActivity(ctx context.Context, arg UpdateActivityParams) (Activity, error) {
+	row := q.db.QueryRowContext(ctx, updateActivity, arg.Name, arg.Description, arg.ID)
+	var i Activity
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateLink = `-- name: UpdateLink :one

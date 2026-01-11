@@ -15,6 +15,7 @@ type Tab int
 const (
 	TabLinks Tab = iota
 	TabTasks
+	TabActivities
 	TabReadLater
 	TabTags
 	TabCategories
@@ -33,6 +34,7 @@ type Model struct {
 	// Tab models
 	linksModel      LinksModel
 	tasksModel      TasksModel
+	activitiesModel ActivitiesModel
 	readLaterModel  ReadLaterModel
 	tagsModel       TagsModel
 	categoriesModel CategoriesModel
@@ -55,6 +57,8 @@ func NewModel(db *database.Database, apiKey string) Model {
 
 	linksModel := NewLinksModel(db)
 	linksModel.SetServices(fetcher, extractor, summarizer)
+	activitiesModel := NewActivitiesModel(db)
+	activitiesModel.SetServices(fetcher, extractor, summarizer)
 
 	return Model{
 		currentTab:      TabLinks,
@@ -64,6 +68,7 @@ func NewModel(db *database.Database, apiKey string) Model {
 		extractor:       extractor,
 		summarizer:      summarizer,
 		linksModel:      linksModel,
+		activitiesModel: activitiesModel,
 		tagsModel:       NewTagsModel(db),
 		categoriesModel: NewCategoriesModel(db),
 	}
@@ -101,12 +106,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+n":
 			// Next tab
-			m.currentTab = (m.currentTab + 1) % 5
+			m.currentTab = (m.currentTab + 1) % 6
 			return m, m.loadTabData()
 
 		case "ctrl+p":
 			// Previous tab
-			m.currentTab = (m.currentTab - 1 + 5) % 5
+			m.currentTab = (m.currentTab - 1 + 6) % 6
 			return m, m.loadTabData()
 		}
 
@@ -116,6 +121,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update all sub-models with dimensions
 		m.tasksModel.width = m.width
 		m.tasksModel.height = m.height
+		m.activitiesModel.width = m.width
+		m.activitiesModel.height = m.height
 		m.linksModel.width = m.width
 		m.linksModel.height = m.height
 		m.readLaterModel.width = m.width
@@ -153,6 +160,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.linksModel, cmd = m.linksModel.Update(msg)
 	case TabTasks:
 		m.tasksModel, cmd = m.tasksModel.Update(msg)
+	case TabActivities:
+		m.activitiesModel, cmd = m.activitiesModel.Update(msg)
 	case TabReadLater:
 		m.readLaterModel, cmd = m.readLaterModel.Update(msg)
 	case TabTags:
@@ -208,7 +217,7 @@ func (m Model) View() string {
 }
 
 func (m Model) renderTabs() string {
-	tabs := []string{"Links", "Tasks", "Read Later", "Tags", "Categories"}
+	tabs := []string{"Links", "Tasks", "Activities", "Read Later", "Tags", "Categories"}
 
 	var renderedTabs []string
 	for i, tab := range tabs {
@@ -268,6 +277,8 @@ func (m Model) renderCurrentTab() string {
 		content = m.linksModel.View()
 	case TabTasks:
 		content = m.tasksModel.View()
+	case TabActivities:
+		content = m.activitiesModel.View()
 	case TabReadLater:
 		content = m.readLaterModel.View()
 	case TabTags:
@@ -353,6 +364,8 @@ func (m Model) loadTabData() tea.Cmd {
 		return m.linksModel.loadLinks()
 	case TabTasks:
 		return m.loadTasks()
+	case TabActivities:
+		return m.activitiesModel.loadActivities()
 	case TabReadLater:
 		return m.loadReadLater()
 	case TabTags:
