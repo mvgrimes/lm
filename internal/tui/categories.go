@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pkg/browser"
 
 	"mccwk.com/lm/internal/database"
 	"mccwk.com/lm/internal/models"
@@ -143,6 +144,11 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 }
 
 func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cmd) {
+	halfPage := (m.height - 15) / 2
+	if halfPage < 1 {
+		halfPage = 1
+	}
+
 	// Tab / Shift+Tab cycle focus between search → list → detail.
 	switch msg.String() {
 	case "tab":
@@ -180,7 +186,23 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 					return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
 				}
 			}
-		case "n":
+		case "pgup", "ctrl+u":
+			m.cursor -= halfPage
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			if len(m.filteredCategories) > 0 {
+				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+			}
+		case "pgdown", "ctrl+d":
+			m.cursor += halfPage
+			if m.cursor >= len(m.filteredCategories) {
+				m.cursor = len(m.filteredCategories) - 1
+			}
+			if len(m.filteredCategories) > 0 {
+				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+			}
+		case "ctrl+a":
 			m.mode = categoriesCreateMode
 			m.createFocus = 0
 			m.focus = panelFocusSearch
@@ -191,6 +213,10 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 			if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
 				return m, m.deleteCategory(m.filteredCategories[m.cursor].ID)
 			}
+		case "ctrl+o":
+			if len(m.links) > 0 {
+				return m, m.openLinks()
+			}
 		case "esc":
 			m.focus = panelFocusSearch
 			m.searchInput.Focus()
@@ -199,7 +225,7 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 
 	case panelFocusDetail:
 		switch msg.String() {
-		case "pgup", "pgdown":
+		case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 			if m.viewportReady {
 				var cmd tea.Cmd
 				m.detailViewport, cmd = m.detailViewport.Update(msg)
@@ -212,6 +238,10 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 		case "down", "j":
 			if m.viewportReady {
 				m.detailViewport.ScrollDown(1)
+			}
+		case "ctrl+o":
+			if len(m.links) > 0 {
+				return m, m.openLinks()
 			}
 		case "esc":
 			m.focus = panelFocusSearch
@@ -237,16 +267,34 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 				}
 			}
 			return m, nil
-		case "n":
+		case "pgup", "ctrl+u":
+			m.cursor -= halfPage
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			if len(m.filteredCategories) > 0 {
+				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+			}
+			return m, nil
+		case "pgdown", "ctrl+d":
+			m.cursor += halfPage
+			if m.cursor >= len(m.filteredCategories) {
+				m.cursor = len(m.filteredCategories) - 1
+			}
+			if len(m.filteredCategories) > 0 {
+				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+			}
+			return m, nil
+		case "ctrl+a":
 			m.mode = categoriesCreateMode
 			m.createFocus = 0
 			m.searchInput.Blur()
 			m.nameInput.Focus()
 			m.descInput.Blur()
 			return m, nil
-		case "d":
-			if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
-				return m, m.deleteCategory(m.filteredCategories[m.cursor].ID)
+		case "ctrl+o":
+			if len(m.links) > 0 {
+				return m, m.openLinks()
 			}
 			return m, nil
 		case "esc":
@@ -405,7 +453,7 @@ func (m CategoriesModel) viewCategories() string {
 		if m.searchInput.Value() != "" {
 			leftContent.WriteString(dimStyle.Render("No categories match your search.\n"))
 		} else {
-			leftContent.WriteString(dimStyle.Render("No categories yet. Press 'n' to create one!\n"))
+			leftContent.WriteString(dimStyle.Render("No categories yet. Press Ctrl+A to create one!\n"))
 		}
 	} else {
 		maxItems := m.height - 15
@@ -481,11 +529,11 @@ func (m CategoriesModel) viewCategories() string {
 	var helpMsg string
 	switch m.focus {
 	case panelFocusList:
-		helpMsg = "Tab: focus right • ↑/↓/j/k: navigate • n: new category • d: delete • Esc: back to search"
+		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Ctrl+A: new • d: delete • Ctrl+O: open links • Esc: search"
 	case panelFocusDetail:
-		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+O: open links • Esc: search"
 	default:
-		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • n: new category • d: delete • Esc: clear search"
+		helpMsg = "type to search • Tab: list • ↑/↓: navigate • Ctrl+A: new • Ctrl+O: open links • Esc: clear"
 	}
 	helpText := "\n" + helpStyle.Render(helpMsg)
 
@@ -547,6 +595,15 @@ func (m CategoriesModel) createCategory(name, description string) tea.Cmd {
 			return errMsg{err: err}
 		}
 		return categoryCreatedMsg{}
+	}
+}
+
+func (m CategoriesModel) openLinks() tea.Cmd {
+	return func() tea.Msg {
+		for _, link := range m.links {
+			_ = browser.OpenURL(link.Url)
+		}
+		return nil
 	}
 }
 

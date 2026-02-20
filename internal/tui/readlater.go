@@ -132,10 +132,12 @@ func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
 					m.cursor = len(m.filteredLinks) - 1
 				}
 				m.updateDetailView()
-			case "enter", "o":
+			case "enter", "ctrl+o":
 				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					return m, m.openLink(m.filteredLinks[m.cursor].Url)
 				}
+			case "ctrl+a":
+				return m, func() tea.Msg { return openAddLinkModalMsg{} }
 			case "esc":
 				m.focus = panelFocusSearch
 				m.searchInput.Focus()
@@ -177,11 +179,13 @@ func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
 					m.updateDetailView()
 				}
 				return m, nil
-			case "enter", "o":
+			case "enter", "ctrl+o":
 				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					return m, m.openLink(m.filteredLinks[m.cursor].Url)
 				}
 				return m, nil
+			case "ctrl+a":
+				return m, func() tea.Msg { return openAddLinkModalMsg{} }
 			case "esc":
 				m.searchInput.SetValue("")
 				m.filterLinks()
@@ -327,11 +331,11 @@ func (m ReadLaterModel) View() string {
 	var helpMsg string
 	switch m.focus {
 	case panelFocusList:
-		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter/o: open • Esc: back to search"
+		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Enter/Ctrl+O: open • Ctrl+A: add • Esc: search"
 	case panelFocusDetail:
-		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+O: open • Esc: search"
 	default:
-		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • Enter/o: open • Esc: clear search"
+		helpMsg = "type to search • Tab: list • ↑/↓: navigate • Enter/Ctrl+O: open • Ctrl+A: add • Esc: clear"
 	}
 	helpText := "\n" + helpStyle.Render(helpMsg)
 

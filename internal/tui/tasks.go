@@ -227,6 +227,11 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 }
 
 func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
+	halfPage := (m.height - 15) / 2
+	if halfPage < 1 {
+		halfPage = 1
+	}
+
 	// Tab / Shift+Tab cycle focus between search → list → detail.
 	switch msg.String() {
 	case "tab":
@@ -264,29 +269,37 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 					return m, m.loadTaskLinks(m.filteredTasks[m.cursor].ID)
 				}
 			}
-		case "n":
+		case "pgup", "ctrl+u":
+			if m.cursor-halfPage >= 0 {
+				m.cursor -= halfPage
+			} else {
+				m.cursor = 0
+			}
+			if len(m.filteredTasks) > 0 {
+				return m, m.loadTaskLinks(m.filteredTasks[m.cursor].ID)
+			}
+		case "pgdown", "ctrl+d":
+			if m.cursor+halfPage < len(m.filteredTasks) {
+				m.cursor += halfPage
+			} else if len(m.filteredTasks) > 0 {
+				m.cursor = len(m.filteredTasks) - 1
+			}
+			if len(m.filteredTasks) > 0 {
+				return m, m.loadTaskLinks(m.filteredTasks[m.cursor].ID)
+			}
+		case "ctrl+a":
 			m.mode = tasksCreateMode
 			m.createFocus = 0
 			m.focus = panelFocusSearch
 			m.searchInput.Blur()
 			m.nameInput.Focus()
 			m.descInput.Blur()
-		case "a":
-			if len(m.filteredTasks) > 0 && m.cursor < len(m.filteredTasks) {
-				m.mode = tasksAddLinkMode
-				taskID := m.filteredTasks[m.cursor].ID
-				m.addLinkModel = NewAddLinkModelForTask(&taskID)
-				m.addLinkModel.inModal = true
-				return m, func() tea.Msg {
-					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-				}
-			}
-		case "c":
+		case "space":
 			if len(m.filteredTasks) > 0 && m.cursor < len(m.filteredTasks) {
 				task := m.filteredTasks[m.cursor]
 				return m, m.toggleTaskCompletion(task.ID, !task.Completed)
 			}
-		case "o":
+		case "enter", "ctrl+o":
 			if m.showLinks && len(m.links) > 0 {
 				return m, m.openLinks()
 			}
@@ -298,7 +311,7 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 
 	case panelFocusDetail:
 		switch msg.String() {
-		case "pgup", "pgdown":
+		case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 			if m.viewportReady && m.showLinks {
 				var cmd tea.Cmd
 				m.detailViewport, cmd = m.detailViewport.Update(msg)
@@ -312,13 +325,27 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 			if m.viewportReady && m.showLinks {
 				m.detailViewport.ScrollDown(1)
 			}
+		case "ctrl+a":
+			if len(m.filteredTasks) > 0 && m.cursor < len(m.filteredTasks) {
+				m.mode = tasksAddLinkMode
+				taskID := m.filteredTasks[m.cursor].ID
+				m.addLinkModel = NewAddLinkModelForTask(&taskID)
+				m.addLinkModel.inModal = true
+				return m, func() tea.Msg {
+					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+				}
+			}
+		case "ctrl+o":
+			if m.showLinks && len(m.links) > 0 {
+				return m, m.openLinks()
+			}
 		case "esc":
 			m.focus = panelFocusSearch
 			m.searchInput.Focus()
 		}
 		return m, nil
 
-	default: // panelFocusSearch
+	default: // panelFocusSearch — only ctrl/arrow/special keys trigger actions
 		switch msg.String() {
 		case "up":
 			if m.cursor > 0 {
@@ -336,31 +363,34 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 				}
 			}
 			return m, nil
-		case "n":
+		case "pgup", "ctrl+u":
+			if m.cursor-halfPage >= 0 {
+				m.cursor -= halfPage
+			} else {
+				m.cursor = 0
+			}
+			if len(m.filteredTasks) > 0 {
+				return m, m.loadTaskLinks(m.filteredTasks[m.cursor].ID)
+			}
+			return m, nil
+		case "pgdown", "ctrl+d":
+			if m.cursor+halfPage < len(m.filteredTasks) {
+				m.cursor += halfPage
+			} else if len(m.filteredTasks) > 0 {
+				m.cursor = len(m.filteredTasks) - 1
+			}
+			if len(m.filteredTasks) > 0 {
+				return m, m.loadTaskLinks(m.filteredTasks[m.cursor].ID)
+			}
+			return m, nil
+		case "ctrl+a":
 			m.mode = tasksCreateMode
 			m.createFocus = 0
 			m.searchInput.Blur()
 			m.nameInput.Focus()
 			m.descInput.Blur()
 			return m, nil
-		case "a":
-			if len(m.filteredTasks) > 0 && m.cursor < len(m.filteredTasks) {
-				m.mode = tasksAddLinkMode
-				taskID := m.filteredTasks[m.cursor].ID
-				m.addLinkModel = NewAddLinkModelForTask(&taskID)
-				m.addLinkModel.inModal = true
-				return m, func() tea.Msg {
-					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-				}
-			}
-			return m, nil
-		case "c":
-			if len(m.filteredTasks) > 0 && m.cursor < len(m.filteredTasks) {
-				task := m.filteredTasks[m.cursor]
-				return m, m.toggleTaskCompletion(task.ID, !task.Completed)
-			}
-			return m, nil
-		case "o":
+		case "ctrl+o", "enter":
 			if m.showLinks && len(m.links) > 0 {
 				return m, m.openLinks()
 			}
@@ -370,7 +400,7 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 			m.filterTasks()
 			return m, nil
 		}
-		// Other keys feed the search input
+		// All other keys feed the search input
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
 		prevLen := len(m.filteredTasks)
@@ -511,7 +541,7 @@ func (m TasksModel) viewTasks() string {
 		if m.searchInput.Value() != "" {
 			leftContent.WriteString(dimStyle.Render("No tasks match your search.\n"))
 		} else {
-			leftContent.WriteString(dimStyle.Render("No tasks yet. Press 'n' to create one!\n"))
+			leftContent.WriteString(dimStyle.Render("No tasks yet. Press Ctrl+A to create one!\n"))
 		}
 	} else {
 		maxTasks := m.height - 15
@@ -583,7 +613,7 @@ func (m TasksModel) viewTasks() string {
 
 		if m.showLinks {
 			if len(m.links) == 0 {
-				rightBuilder.WriteString(dimStyle.Render("No links yet. Press 'a' to add a link."))
+				rightBuilder.WriteString(dimStyle.Render("No links yet. Tab to detail panel, then Ctrl+A to add."))
 			} else {
 				// Build content for viewport
 				var detailContent strings.Builder
@@ -620,7 +650,7 @@ func (m TasksModel) viewTasks() string {
 					rightBuilder.WriteString(detailContent.String())
 				}
 
-				rightBuilder.WriteString("\n\n" + dimStyle.Render("Press 'o' to open all links"))
+				rightBuilder.WriteString("\n\n" + dimStyle.Render("Ctrl+O: open all links"))
 			}
 		} else {
 			rightBuilder.WriteString(dimStyle.Render("Loading links..."))
@@ -641,11 +671,11 @@ func (m TasksModel) viewTasks() string {
 	var helpMsg string
 	switch m.focus {
 	case panelFocusList:
-		helpMsg = "n: new task • a: add link • c: toggle complete • o: open links • j/k: navigate • Tab: next panel • Esc: search"
+		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Ctrl+A: new task • Space: toggle • Ctrl+O: open links • Esc: search"
 	case panelFocusDetail:
-		helpMsg = "j/k/PgUp/PgDn: scroll • Tab: next panel • Esc: search"
+		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+A: add link • Ctrl+O: open links • Esc: search"
 	default: // panelFocusSearch
-		helpMsg = "Type to search • n: new task • a: add link • c: toggle • o: open links • up/down: navigate • Tab: list panel"
+		helpMsg = "type to search • Tab: list • ↑/↓: navigate • Ctrl+A: new task • Ctrl+O: open links • Esc: clear"
 	}
 	helpText := "\n" + helpStyle.Render(helpMsg)
 

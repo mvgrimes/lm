@@ -205,6 +205,11 @@ func (m ActivitiesModel) Update(msg tea.Msg) (ActivitiesModel, tea.Cmd) {
 }
 
 func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cmd) {
+	halfPage := (m.height - 15) / 2
+	if halfPage < 1 {
+		halfPage = 1
+	}
+
 	// Tab / Shift+Tab cycle focus between search → list → detail.
 	switch msg.String() {
 	case "tab":
@@ -242,23 +247,30 @@ func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cm
 					return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
 				}
 			}
-		case "n":
+		case "pgup", "ctrl+u":
+			m.cursor -= halfPage
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			if len(m.filteredActivities) > 0 {
+				return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+			}
+		case "pgdown", "ctrl+d":
+			m.cursor += halfPage
+			if m.cursor >= len(m.filteredActivities) {
+				m.cursor = len(m.filteredActivities) - 1
+			}
+			if len(m.filteredActivities) > 0 {
+				return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+			}
+		case "ctrl+a":
 			m.mode = activitiesCreateMode
 			m.createFocus = 0
 			m.focus = panelFocusSearch
 			m.searchInput.Blur()
 			m.nameInput.Focus()
 			m.descInput.Blur()
-		case "a":
-			if len(m.filteredActivities) > 0 && m.cursor < len(m.filteredActivities) {
-				m.mode = activitiesAddLinkMode
-				m.addLinkModel = NewAddLinkModel()
-				m.addLinkModel.inModal = true
-				return m, func() tea.Msg {
-					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-				}
-			}
-		case "o":
+		case "ctrl+o":
 			if m.showLinks && len(m.links) > 0 {
 				return m, m.openLinks()
 			}
@@ -270,7 +282,7 @@ func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cm
 
 	case panelFocusDetail:
 		switch msg.String() {
-		case "pgup", "pgdown":
+		case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 			if m.viewportReady && m.showLinks {
 				var cmd tea.Cmd
 				m.detailViewport, cmd = m.detailViewport.Update(msg)
@@ -283,6 +295,19 @@ func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cm
 		case "down", "j":
 			if m.viewportReady && m.showLinks {
 				m.detailViewport.ScrollDown(1)
+			}
+		case "ctrl+a":
+			if len(m.filteredActivities) > 0 && m.cursor < len(m.filteredActivities) {
+				m.mode = activitiesAddLinkMode
+				m.addLinkModel = NewAddLinkModel()
+				m.addLinkModel.inModal = true
+				return m, func() tea.Msg {
+					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+				}
+			}
+		case "ctrl+o":
+			if m.showLinks && len(m.links) > 0 {
+				return m, m.openLinks()
 			}
 		case "esc":
 			m.focus = panelFocusSearch
@@ -308,24 +333,32 @@ func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cm
 				}
 			}
 			return m, nil
-		case "n":
+		case "pgup", "ctrl+u":
+			m.cursor -= halfPage
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			if len(m.filteredActivities) > 0 {
+				return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+			}
+			return m, nil
+		case "pgdown", "ctrl+d":
+			m.cursor += halfPage
+			if m.cursor >= len(m.filteredActivities) {
+				m.cursor = len(m.filteredActivities) - 1
+			}
+			if len(m.filteredActivities) > 0 {
+				return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+			}
+			return m, nil
+		case "ctrl+a":
 			m.mode = activitiesCreateMode
 			m.createFocus = 0
 			m.searchInput.Blur()
 			m.nameInput.Focus()
 			m.descInput.Blur()
 			return m, nil
-		case "a":
-			if len(m.filteredActivities) > 0 && m.cursor < len(m.filteredActivities) {
-				m.mode = activitiesAddLinkMode
-				m.addLinkModel = NewAddLinkModel()
-				m.addLinkModel.inModal = true
-				return m, func() tea.Msg {
-					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-				}
-			}
-			return m, nil
-		case "o":
+		case "ctrl+o", "enter":
 			if m.showLinks && len(m.links) > 0 {
 				return m, m.openLinks()
 			}
@@ -489,7 +522,7 @@ func (m ActivitiesModel) viewActivities() string {
 		if m.searchInput.Value() != "" {
 			leftContent.WriteString(dimStyle.Render("No activities match your search.\n"))
 		} else {
-			leftContent.WriteString(dimStyle.Render("No activities yet. Press 'n' to create one!\n"))
+			leftContent.WriteString(dimStyle.Render("No activities yet. Press Ctrl+A to create one!\n"))
 		}
 	} else {
 		maxItems := m.height - 15
@@ -557,7 +590,7 @@ func (m ActivitiesModel) viewActivities() string {
 
 		if m.showLinks {
 			if len(m.links) == 0 {
-				rightBuilder.WriteString(dimStyle.Render("No links yet. Press 'a' to add a link."))
+				rightBuilder.WriteString(dimStyle.Render("No links yet. Tab to detail panel, then Ctrl+A to add."))
 			} else {
 				var detailContent strings.Builder
 				for _, link := range m.links {
@@ -585,7 +618,7 @@ func (m ActivitiesModel) viewActivities() string {
 				} else {
 					rightBuilder.WriteString(detailContent.String())
 				}
-				rightBuilder.WriteString("\n\n" + dimStyle.Render("Press 'o' to open all links"))
+				rightBuilder.WriteString("\n\n" + dimStyle.Render("Ctrl+O: open all links"))
 			}
 		} else {
 			rightBuilder.WriteString(dimStyle.Render("Loading links..."))
@@ -603,11 +636,11 @@ func (m ActivitiesModel) viewActivities() string {
 	var helpMsg string
 	switch m.focus {
 	case panelFocusList:
-		helpMsg = "Tab: focus right • ↑/↓/j/k: navigate • n: new • a: add link • o: open links • Esc: back to search"
+		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Ctrl+A: new • Ctrl+O: open links • Esc: search"
 	case panelFocusDetail:
-		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+A: add link • Ctrl+O: open links • Esc: search"
 	default:
-		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • n: new • a: add link • o: open links • Esc: clear"
+		helpMsg = "type to search • Tab: list • ↑/↓: navigate • Ctrl+A: new • Ctrl+O: open links • Esc: clear"
 	}
 	helpText := "\n" + helpStyle.Render(helpMsg)
 

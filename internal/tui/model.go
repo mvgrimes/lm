@@ -152,22 +152,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
+	// Sub-models can fire this to request the global add-link modal.
+	if _, ok := msg.(openAddLinkModalMsg); ok {
+		m.showAddLinkModal = true
+		m.addLinkModel = NewAddLinkModel()
+		m.addLinkModel.width = m.width
+		m.addLinkModel.height = m.height
+		m.addLinkModel.inModal = true
+		cmds = append(cmds, func() tea.Msg {
+			return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+		})
+		return m, tea.Batch(cmds...)
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-
-		case "ctrl+a":
-			m.showAddLinkModal = true
-			m.addLinkModel = NewAddLinkModel()
-			m.addLinkModel.width = m.width
-			m.addLinkModel.height = m.height
-			m.addLinkModel.inModal = true
-			cmds = append(cmds, func() tea.Msg {
-				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-			})
-			return m, tea.Batch(cmds...)
 
 		case "ctrl+n":
 			m.currentTab = (m.currentTab + 1) % 6
@@ -404,6 +406,10 @@ func (m Model) loadTabData() tea.Cmd {
 }
 
 // Messages
+// openAddLinkModalMsg is fired by any tab to ask the root model to open the
+// global add-link modal.
+type openAddLinkModalMsg struct{}
+
 type linksLoadedMsg struct {
 	links []models.Link
 }

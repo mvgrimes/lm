@@ -177,7 +177,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 
 		switch m.focus {
 		case panelFocusList:
-			// List-focused: navigate with arrows/j/k, open with Enter, back to search with Esc.
+			// List-focused: navigate with arrows/j/k, open with Enter/Ctrl+O, back to search with Esc.
 			switch msg.String() {
 			case "up", "k":
 				if m.cursor > 0 {
@@ -201,10 +201,12 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 					m.cursor = len(m.filteredLinks) - 1
 				}
 				m.updateDetailView()
-			case "enter":
+			case "enter", "ctrl+o":
 				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					return m, m.openLink(m.filteredLinks[m.cursor].Url)
 				}
+			case "ctrl+a":
+				return m, func() tea.Msg { return openAddLinkModalMsg{} }
 			case "esc":
 				m.focus = panelFocusSearch
 				m.searchInput.Focus()
@@ -234,7 +236,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			return m, nil
 
 		default: // panelFocusSearch
-			// Up/Down always navigate the list even from search focus for convenience.
+			// Up/Down navigate the list; ctrl+a/ctrl+o work from any focus.
 			switch msg.String() {
 			case "up":
 				if m.cursor > 0 {
@@ -248,13 +250,14 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 					m.updateDetailView()
 				}
 				return m, nil
-			case "enter":
+			case "enter", "ctrl+o":
 				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					return m, m.openLink(m.filteredLinks[m.cursor].Url)
 				}
 				return m, nil
+			case "ctrl+a":
+				return m, func() tea.Msg { return openAddLinkModalMsg{} }
 			case "esc":
-				// Clear the search filter
 				m.searchInput.SetValue("")
 				m.filterLinks()
 				return m, nil
@@ -481,11 +484,11 @@ func (m LinksModel) View() string {
 	var helpMsg string
 	switch m.focus {
 	case panelFocusList:
-		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter: open • s: sort • Esc: back to search"
+		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Enter/Ctrl+O: open • Ctrl+A: add • s: sort • Esc: search"
 	case panelFocusDetail:
-		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+O: open • Esc: search"
 	default:
-		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • Enter: open • Esc: clear search"
+		helpMsg = "type to search • Tab: list • ↑/↓: navigate • Enter/Ctrl+O: open • Ctrl+A: add • Esc: clear"
 	}
 	helpText := "\n" + helpStyle.Render(helpMsg)
 
