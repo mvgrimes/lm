@@ -49,12 +49,13 @@ func NewLinksModel(db *database.Database) LinksModel {
 	searchInput.Placeholder = "Search links..."
 	searchInput.Width = 50
 	searchInput.Prompt = "🔍 "
+	searchInput.Focus()
 
 	return LinksModel{
 		db:            db,
 		ctx:           context.Background(),
 		searchInput:   searchInput,
-		searchFocused: false,
+		searchFocused: true,
 	}
 }
 
@@ -65,7 +66,7 @@ func (m *LinksModel) SetServices(fetcher *services.Fetcher, extractor *services.
 }
 
 func (m LinksModel) Init() tea.Cmd {
-	return m.loadLinks()
+	return tea.Batch(m.loadLinks(), textinput.Blink)
 }
 
 func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
@@ -113,94 +114,60 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Handle search focus toggle
-		if msg.String() == "/" && !m.searchFocused {
-			m.searchFocused = true
-			m.searchInput.Focus()
-			return m, nil
+		// Calculate half-page jump size from visible list height.
+		halfPage := (m.height - 15) / 2
+		if halfPage < 1 {
+			halfPage = 1
 		}
 
-		if msg.String() == "esc" && m.searchFocused {
-			m.searchFocused = false
-			m.searchInput.Blur()
-			return m, nil
-		}
-
-		// If search is focused, handle input
-		if m.searchFocused {
-			if msg.String() == "enter" {
-				m.searchFocused = false
-				m.searchInput.Blur()
-				m.filterLinks()
-				return m, nil
-			}
-			m.searchInput, cmd = m.searchInput.Update(msg)
-			m.filterLinks()
-			return m, cmd
-		}
-
-		// Navigation keys when search not focused
+		// Navigation keys are always intercepted before the search input sees them.
 		switch msg.String() {
-		case "up", "k":
+		case "up":
 			if m.cursor > 0 {
 				m.cursor--
 				m.updateDetailView()
 			}
-		case "down", "j":
+			return m, nil
+		case "down":
 			if m.cursor < len(m.filteredLinks)-1 {
 				m.cursor++
 				m.updateDetailView()
 			}
-		case "o", "enter":
+			return m, nil
+		case "pgup", "ctrl+u":
+			if m.cursor > 0 {
+				m.cursor -= halfPage
+				if m.cursor < 0 {
+					m.cursor = 0
+				}
+				m.updateDetailView()
+			}
+			return m, nil
+		case "pgdown", "ctrl+d":
+			if m.cursor < len(m.filteredLinks)-1 {
+				m.cursor += halfPage
+				if m.cursor >= len(m.filteredLinks) {
+					m.cursor = len(m.filteredLinks) - 1
+				}
+				m.updateDetailView()
+			}
+			return m, nil
+		case "enter":
 			if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 				return m, m.openLink(m.filteredLinks[m.cursor].Url)
 			}
-		case "d":
-			// Delete link
-			if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
-				return m, m.deleteLink(m.filteredLinks[m.cursor].ID)
-			}
-		case "e":
-			// Edit link
-			if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
-				m.editMode = true
-				m.editLinkModel = NewEditLinkModel(
-					m.filteredLinks[m.cursor],
-					m.db,
-					m.ctx,
-					m.fetcher,
-					m.extractor,
-					m.summarizer,
-				)
-				// Load existing categories and tags for the link
-				categories, _ := m.db.Queries.GetCategoriesForLink(m.ctx, m.filteredLinks[m.cursor].ID)
-				if len(categories) > 0 {
-					catNames := []string{}
-					for _, cat := range categories {
-						catNames = append(catNames, cat.Name)
-					}
-					m.editLinkModel.categoryInput.SetValue(strings.Join(catNames, ", "))
-				}
-				tags, _ := m.db.Queries.GetTagsForLink(m.ctx, m.filteredLinks[m.cursor].ID)
-				if len(tags) > 0 {
-					tagNames := []string{}
-					for _, tag := range tags {
-						tagNames = append(tagNames, tag.Name)
-					}
-					m.editLinkModel.tagsInput.SetValue(strings.Join(tagNames, ", "))
-				}
-				// Send window size to initialize
-				return m, func() tea.Msg {
-					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-				}
-			}
-		case "pgup", "pgdown":
-			// Scroll detail viewport
-			if m.viewportReady {
-				m.detailViewport, cmd = m.detailViewport.Update(msg)
-				return m, cmd
-			}
+			return m, nil
+		case "esc":
+			// Clear the search filter; keep focus in the input.
+			m.searchInput.SetValue("")
+			m.filterLinks()
+			return m, nil
 		}
+
+		// All other keys feed the search input for live filtering.
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		m.filterLinks()
+		return m, cmd
 
 	case linksLoadedMsg:
 		m.links = msg.links
@@ -278,14 +245,9 @@ func (m LinksModel) View() string {
 		Padding(0, 1).
 		Width(leftWidth - 4)
 
-	var searchBox string
-	if m.searchFocused {
-		searchBox = searchBoxStyle.
-			BorderForeground(lipgloss.Color("10")).
-			Render(m.searchInput.View())
-	} else {
-		searchBox = searchBoxStyle.Render(m.searchInput.View())
-	}
+	searchBox := searchBoxStyle.
+		BorderForeground(lipgloss.Color("10")).
+		Render(m.searchInput.View())
 
 	// Left panel - link list
 	leftPanelStyle := lipgloss.NewStyle().
@@ -408,7 +370,7 @@ func (m LinksModel) View() string {
 
 	// Help text
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpText := "\n" + helpStyle.Render("/: search • arrows/j/k: navigate • Enter/o: open • e: edit • d: delete • PgUp/PgDn: scroll details")
+	helpText := "\n" + helpStyle.Render("type to search • ↑/↓: navigate • PgUp/PgDn Ctrl+U/D: jump • Enter: open • Esc: clear search")
 
 	return mainContent + helpText
 }
