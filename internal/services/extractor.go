@@ -10,7 +10,14 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-var multipleBlankLines = regexp.MustCompile(`\n{3,}`)
+var (
+	multipleBlankLines = regexp.MustCompile(`\n{3,}`)
+	// mdImage matches ![alt](url) — images must be replaced before links so
+	// the image-inside-link pattern [![alt](img)](link) is handled correctly.
+	mdImage = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
+	// mdLink matches [text](url)
+	mdLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+)
 
 type Extractor struct{}
 
@@ -49,6 +56,16 @@ func (e *Extractor) ExtractText(html, pageURL string) (title string, text string
 	if err != nil {
 		return "", "", fmt.Errorf("failed to convert HTML to markdown: %w", err)
 	}
+
+	// Replace images with a short placeholder, keeping alt text when present.
+	md = mdImage.ReplaceAllStringFunc(md, func(match string) string {
+		if sub := mdImage.FindStringSubmatch(match); len(sub) > 1 && strings.TrimSpace(sub[1]) != "" {
+			return "[image: " + strings.TrimSpace(sub[1]) + "]"
+		}
+		return "[image]"
+	})
+	// Strip link URLs, keeping the visible link text.
+	md = mdLink.ReplaceAllString(md, "$1")
 
 	text = strings.TrimSpace(multipleBlankLines.ReplaceAllString(md, "\n\n"))
 	return title, text, nil
