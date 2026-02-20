@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -26,6 +27,29 @@ const (
 	linksFocusDetail
 )
 
+// linksSortMode controls the order of the links list.
+type linksSortMode int
+
+const (
+	linksSortDateDesc  linksSortMode = iota // newest first (default)
+	linksSortDateAsc                        // oldest first
+	linksSortTitleAsc                       // A → Z
+	linksSortTitleDesc                      // Z → A
+)
+
+func (s linksSortMode) String() string {
+	switch s {
+	case linksSortDateAsc:
+		return "date ↑"
+	case linksSortTitleAsc:
+		return "title A-Z"
+	case linksSortTitleDesc:
+		return "title Z-A"
+	default:
+		return "date ↓"
+	}
+}
+
 type LinksModel struct {
 	links         []models.Link
 	filteredLinks []models.Link
@@ -33,9 +57,10 @@ type LinksModel struct {
 	db            *database.Database
 	ctx           context.Context
 
-	// Search functionality
+	// Search and sort
 	searchInput textinput.Model
 	focus       linksFocusArea
+	sortMode    linksSortMode
 
 	// Detail view
 	detailViewport viewport.Model
@@ -130,6 +155,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 		}
 
 		// Tab / Shift+Tab cycle focus between search → list → detail.
+		// s cycles the sort mode from any focus area.
 		switch msg.String() {
 		case "tab":
 			m.focus = (m.focus + 1) % 3
@@ -147,6 +173,15 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 				m.searchInput.Blur()
 			}
 			return m, nil
+		case "s":
+			// Only cycle sort when focus is NOT on the search input
+			// (so typing 's' in search still filters).
+			if m.focus != linksFocusSearch {
+				m.sortMode = (m.sortMode + 1) % 4
+				m.filterLinks()
+				m.updateDetailView()
+				return m, nil
+			}
 		}
 
 		switch m.focus {
@@ -327,7 +362,9 @@ func (m LinksModel) View() string {
 	dimStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("243"))
 
-	leftContent := searchBox + "\n\n"
+	sortStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	sortIndicator := sortStyle.Render(fmt.Sprintf("  sort: %s", m.sortMode.String()))
+	leftContent := searchBox + "\n" + sortIndicator + "\n\n"
 
 	if len(m.filteredLinks) == 0 {
 		if m.searchInput.Value() != "" {
@@ -441,7 +478,7 @@ func (m LinksModel) View() string {
 	var helpMsg string
 	switch m.focus {
 	case linksFocusList:
-		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter: open • Esc: back to search"
+		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter: open • s: sort • Esc: back to search"
 	case linksFocusDetail:
 		helpMsg = "Tab: focus search • PgUp/PgDn: scroll • Esc: back to search"
 	default:
@@ -455,20 +492,57 @@ func (m LinksModel) View() string {
 func (m *LinksModel) filterLinks() {
 	query := strings.ToLower(m.searchInput.Value())
 	if query == "" {
-		m.filteredLinks = m.links
-		m.cursor = 0
-		return
+		// Copy slice so we can sort without mutating m.links
+		filtered := make([]models.Link, len(m.links))
+		copy(filtered, m.links)
+		m.filteredLinks = filtered
+	} else {
+		m.filteredLinks = []models.Link{}
+		for _, link := range m.links {
+			// Search in URL, title, content, and summary
+			if strings.Contains(strings.ToLower(link.Url), query) ||
+				(link.Title.Valid && strings.Contains(strings.ToLower(link.Title.String), query)) ||
+				(link.Content.Valid && strings.Contains(strings.ToLower(link.Content.String), query)) ||
+				(link.Summary.Valid && strings.Contains(strings.ToLower(link.Summary.String), query)) {
+				m.filteredLinks = append(m.filteredLinks, link)
+			}
+		}
 	}
 
-	m.filteredLinks = []models.Link{}
-	for _, link := range m.links {
-		// Search in URL, title, content, and summary
-		if strings.Contains(strings.ToLower(link.Url), query) ||
-			(link.Title.Valid && strings.Contains(strings.ToLower(link.Title.String), query)) ||
-			(link.Content.Valid && strings.Contains(strings.ToLower(link.Content.String), query)) ||
-			(link.Summary.Valid && strings.Contains(strings.ToLower(link.Summary.String), query)) {
-			m.filteredLinks = append(m.filteredLinks, link)
-		}
+	// Apply sort
+	switch m.sortMode {
+	case linksSortDateAsc:
+		sort.Slice(m.filteredLinks, func(i, j int) bool {
+			return m.filteredLinks[i].CreatedAt.Before(m.filteredLinks[j].CreatedAt)
+		})
+	case linksSortTitleAsc:
+		sort.Slice(m.filteredLinks, func(i, j int) bool {
+			ti := strings.ToLower(m.filteredLinks[i].Title.String)
+			tj := strings.ToLower(m.filteredLinks[j].Title.String)
+			if ti == "" {
+				ti = strings.ToLower(m.filteredLinks[i].Url)
+			}
+			if tj == "" {
+				tj = strings.ToLower(m.filteredLinks[j].Url)
+			}
+			return ti < tj
+		})
+	case linksSortTitleDesc:
+		sort.Slice(m.filteredLinks, func(i, j int) bool {
+			ti := strings.ToLower(m.filteredLinks[i].Title.String)
+			tj := strings.ToLower(m.filteredLinks[j].Title.String)
+			if ti == "" {
+				ti = strings.ToLower(m.filteredLinks[i].Url)
+			}
+			if tj == "" {
+				tj = strings.ToLower(m.filteredLinks[j].Url)
+			}
+			return ti > tj
+		})
+	default: // linksSortDateDesc
+		sort.Slice(m.filteredLinks, func(i, j int) bool {
+			return m.filteredLinks[i].CreatedAt.After(m.filteredLinks[j].CreatedAt)
+		})
 	}
 
 	// Reset cursor
