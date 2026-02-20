@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"go.dalton.dog/bubbleup"
 
 	"mccwk.com/lm/internal/database"
+	"mccwk.com/lm/internal/logging"
 	"mccwk.com/lm/internal/models"
 	"mccwk.com/lm/internal/services"
 )
@@ -24,6 +26,10 @@ const (
 	TabTags
 	TabCategories
 )
+
+// logPanelHeight is the total screen rows reserved for the log panel (including
+// its border and title) when it is visible.
+const logPanelHeight = 12
 
 // notifyMsg is sent by sub-models to surface a user-visible notification.
 type notifyMsg struct {
@@ -74,9 +80,15 @@ type Model struct {
 
 	// Notifications overlay
 	alert bubbleup.AlertModel
+
+	// Log panel
+	logSink        *logging.MemorySink
+	logViewport    viewport.Model
+	logReady       bool
+	showLogPanel   bool
 }
 
-func NewModel(db *database.Database, apiKey string) Model {
+func NewModel(db *database.Database, apiKey string, logSink *logging.MemorySink) Model {
 	var summarizer *services.Summarizer
 	if apiKey != "" {
 		summarizer = services.NewSummarizer(apiKey)
@@ -107,6 +119,7 @@ func NewModel(db *database.Database, apiKey string) Model {
 		tagsModel:       NewTagsModel(db),
 		categoriesModel: NewCategoriesModel(db),
 		alert:           alert,
+		logSink:         logSink,
 	}
 }
 
@@ -171,6 +184,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 
+		case "ctrl+l":
+			m.showLogPanel = !m.showLogPanel
+			if m.showLogPanel {
+				m.refreshLogViewport()
+			}
+			// Re-send window size so tab models recalculate heights.
+			cmds = append(cmds, func() tea.Msg {
+				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+			})
+			return m, tea.Batch(cmds...)
+
 		case "ctrl+n":
 			m.currentTab = (m.currentTab + 1) % 6
 			cmds = append(cmds, m.loadTabData())
@@ -182,6 +206,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
+		// Forward PgUp/PgDn to the log viewport when the panel is visible.
+		if m.showLogPanel && m.logReady {
+			switch msg.String() {
+			case "pgup", "pgdown":
+				var vpCmd tea.Cmd
+				m.logViewport, vpCmd = m.logViewport.Update(msg)
+				if vpCmd != nil {
+					cmds = append(cmds, vpCmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -189,6 +226,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasksModel.height = m.height
 		m.activitiesModel.width = m.width
 		m.activitiesModel.height = m.height
+
+		// Initialise / resize the log viewport.
+		logInnerH := logPanelHeight - 4 // subtract border rows + title
+		if logInnerH < 2 {
+			logInnerH = 2
+		}
+		if !m.logReady {
+			m.logViewport = viewport.New(m.width-4, logInnerH)
+			m.logReady = true
+		} else {
+			m.logViewport.Width = m.width - 4
+			m.logViewport.Height = logInnerH
+		}
+		if m.showLogPanel {
+			m.refreshLogViewport()
+		}
 
 		// Forward WindowSizeMsg to all tab models so their viewports are
 		// initialized regardless of which tab is currently active.
@@ -242,6 +295,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// refreshLogViewport updates the log viewport content from the in-memory sink
+// and scrolls to the most-recent entry.
+func (m *Model) refreshLogViewport() {
+	if !m.logReady || m.logSink == nil {
+		return
+	}
+	content := m.logSink.Render(m.logViewport.Width)
+	m.logViewport.SetContent(content)
+	m.logViewport.GotoBottom()
+}
+
 func (m Model) updateAddLinkModal(msg tea.Msg) (Model, tea.Cmd) {
 	var extraCmd tea.Cmd
 
@@ -283,7 +347,12 @@ func (m Model) View() string {
 	if m.showAddLinkModal {
 		content = m.renderAddLinkModal()
 	} else {
-		content = m.renderTabs() + "\n" + m.renderCurrentTab()
+		tabContent := m.renderTabs() + "\n" + m.renderCurrentTab()
+		if m.showLogPanel {
+			content = tabContent + "\n" + m.renderLogPanel()
+		} else {
+			content = tabContent
+		}
 	}
 
 	return m.alert.Render(content)
@@ -332,7 +401,12 @@ func (m Model) renderTabs() string {
 }
 
 func (m Model) renderCurrentTab() string {
-	availableHeight := m.height - 7
+	// Reduce available height when the log panel is visible.
+	extra := 0
+	if m.showLogPanel {
+		extra = logPanelHeight + 1 // +1 for the separator newline
+	}
+	availableHeight := m.height - 7 - extra
 
 	var content string
 	switch m.currentTab {
@@ -350,7 +424,7 @@ func (m Model) renderCurrentTab() string {
 		content = m.categoriesModel.View()
 	}
 
-	footerText := "Ctrl+A: add link • Ctrl+N/P: prev/next tab • Ctrl+C: quit"
+	footerText := "Ctrl+A: add link • Ctrl+N/P: prev/next tab • Ctrl+L: logs • Ctrl+C: quit"
 	if m.totalLLMCost > 0 {
 		costStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 		footerText += costStyle.Render(fmt.Sprintf(" • LLM: $%.5f", m.totalLLMCost))
@@ -363,6 +437,33 @@ func (m Model) renderCurrentTab() string {
 		MaxHeight(availableHeight)
 
 	return contentStyle.Render(content) + footer
+}
+
+func (m Model) renderLogPanel() string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("6"))
+
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("243"))
+
+	title := titleStyle.Render("Logs") +
+		hintStyle.Render("  PgUp/PgDn: scroll • Ctrl+L: close")
+
+	var body string
+	if m.logReady {
+		body = title + "\n" + m.logViewport.View()
+	} else {
+		body = title + "\n" + hintStyle.Render("(no log sink configured)")
+	}
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("237")).
+		Padding(0, 1).
+		Width(m.width - 4)
+
+	return panelStyle.Render(body)
 }
 
 func (m Model) renderAddLinkModal() string {
@@ -439,4 +540,3 @@ func (m Model) loadTasks() tea.Cmd {
 		return tasksLoadedMsg{tasks: tasks}
 	}
 }
-

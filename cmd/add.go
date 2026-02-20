@@ -99,7 +99,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	for i, url := range urls {
 		if multi {
-			fmt.Printf("\n[%d/%d] %s\n", i+1, len(urls), url)
+			slog.Info("processing URL", "index", i+1, "total", len(urls), "url", url)
 		}
 		inTok, outTok, err := addURL(ctx, db, fetcher, extractor, summarizer, url)
 		grandInputTok += inTok
@@ -112,10 +112,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		processed++
 	}
 
-	// Grand-total summary.
 	if multi {
-		fmt.Printf("\n--- Summary ---\n")
-		fmt.Printf("Processed: %d  Skipped: %d\n", processed, skipped)
+		slog.Info("batch complete", "processed", processed, "skipped", skipped)
 	}
 
 	if grandInputTok+grandOutputTok > 0 {
@@ -126,9 +124,6 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			"output_tokens", grandOutputTok,
 			"cost_usd", fmt.Sprintf("$%.5f", cost),
 		)
-		if multi {
-			fmt.Printf("LLM cost:  $%.5f  (%d in + %d out tokens)\n", cost, grandInputTok, grandOutputTok)
-		}
 	}
 
 	return nil
@@ -137,12 +132,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 // addURL fetches, extracts, summarises, and saves a single URL.
 // It returns the number of LLM input and output tokens consumed.
 func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetcher, extractor *services.Extractor, summarizer *services.Summarizer, url string) (inputTok, outputTok int, err error) {
-	fmt.Printf("Fetching %s ...\n", url)
+	slog.Info("fetching URL", "url", url)
 
 	// Skip duplicates.
 	existing, err := db.Queries.GetLinkByURL(ctx, url)
 	if err == nil {
-		fmt.Printf("Already exists (id=%d): %s\n", existing.ID, existing.Title.String)
+		slog.Info("URL already exists", "id", existing.ID, "title", existing.Title.String)
 		return 0, 0, nil
 	}
 
@@ -151,7 +146,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 		return 0, 0, fmt.Errorf("fetch failed: %w", err)
 	}
 
-	fmt.Println("Extracting content ...")
+	slog.Info("extracting content")
 	title, text, err := extractor.ExtractText(html, url)
 	if err != nil {
 		return 0, 0, fmt.Errorf("extraction failed: %w", err)
@@ -162,7 +157,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 	var suggestedTags []string
 
 	if summarizer != nil {
-		fmt.Println("Summarising ...")
+		slog.Info("summarising", "url", url)
 		var inTok, outTok int
 
 		summary, inTok, outTok, _ = summarizer.Summarize(ctx, title, text)
@@ -197,7 +192,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 		return inputTok, outputTok, fmt.Errorf("failed to save link: %w", err)
 	}
 
-	fmt.Printf("Saved: [%d] %s\n", link.ID, link.Title.String)
+	slog.Info("link saved", "id", link.ID, "title", link.Title.String)
 
 	// Category: flag value takes priority over AI suggestion.
 	catName := strings.TrimSpace(addCategory)
@@ -217,7 +212,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 		}
 		if catErr == nil {
 			_ = db.Queries.LinkCategory(ctx, models.LinkCategoryParams{LinkID: link.ID, CategoryID: cat.ID})
-			fmt.Printf("Category: %s\n", cat.Name)
+			slog.Info("category assigned", "name", cat.Name)
 		}
 	}
 
@@ -241,7 +236,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 		_ = db.Queries.LinkTag(ctx, models.LinkTagParams{LinkID: link.ID, TagID: t.ID})
 	}
 	if len(tagList) > 0 {
-		fmt.Printf("Tags: %s\n", strings.Join(tagList, ", "))
+		slog.Info("tags assigned", "tags", strings.Join(tagList, ", "))
 	}
 
 	// Task / Activity association.
@@ -262,7 +257,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 			slog.Warn("could not create task", "name", taskName, "error", taskErr)
 		} else {
 			_ = db.Queries.LinkTask(ctx, models.LinkTaskParams{LinkID: link.ID, TaskID: task.ID})
-			fmt.Printf("Task: %s (id=%d)\n", task.Name, task.ID)
+			slog.Info("task created", "name", task.Name, "id", task.ID)
 		}
 
 	case "activity":
@@ -281,12 +276,12 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 			slog.Warn("could not create activity", "name", actName, "error", actErr)
 		} else {
 			_ = db.Queries.LinkActivity(ctx, models.LinkActivityParams{LinkID: link.ID, ActivityID: activity.ID})
-			fmt.Printf("Activity: %s (id=%d)\n", activity.Name, activity.ID)
+			slog.Info("activity created", "name", activity.Name, "id", activity.ID)
 		}
 	}
 
 	if summary != "" {
-		fmt.Printf("\nSummary: %s\n", summary)
+		slog.Info("summary generated", "summary", summary)
 	}
 
 	return inputTok, outputTok, nil

@@ -75,7 +75,7 @@ func runRefetch(cmd *cobra.Command, args []string) error {
 
 	for i, url := range urls {
 		if multi {
-			fmt.Printf("\n[%d/%d] %s\n", i+1, len(urls), url)
+			slog.Info("processing URL", "index", i+1, "total", len(urls), "url", url)
 		}
 		inTok, outTok, err := refetchURL(ctx, db, fetcher, extractor, summarizer, url)
 		grandInputTok += inTok
@@ -89,8 +89,7 @@ func runRefetch(cmd *cobra.Command, args []string) error {
 	}
 
 	if multi {
-		fmt.Printf("\n--- Summary ---\n")
-		fmt.Printf("Processed: %d  Skipped: %d\n", processed, skipped)
+		slog.Info("batch complete", "processed", processed, "skipped", skipped)
 	}
 
 	if grandInputTok+grandOutputTok > 0 {
@@ -101,9 +100,6 @@ func runRefetch(cmd *cobra.Command, args []string) error {
 			"output_tokens", grandOutputTok,
 			"cost_usd", fmt.Sprintf("$%.5f", cost),
 		)
-		if multi {
-			fmt.Printf("LLM cost:  $%.5f  (%d in + %d out tokens)\n", cost, grandInputTok, grandOutputTok)
-		}
 	}
 
 	return nil
@@ -115,14 +111,14 @@ func refetchURL(ctx context.Context, db *database.Database, fetcher *services.Fe
 		return 0, 0, fmt.Errorf("URL not found in database (use 'lm add' to add it first): %s", url)
 	}
 
-	fmt.Printf("Fetching %s ...\n", url)
+	slog.Info("fetching URL", "url", url)
 	html, err := fetcher.FetchURL(ctx, url)
 	if err != nil {
 		return 0, 0, fmt.Errorf("fetch failed: %w", err)
 	}
 	_ = db.Queries.UpdateLinkFetchedAt(ctx, existing.ID)
 
-	fmt.Println("Extracting content ...")
+	slog.Info("extracting content")
 	title, text, err := extractor.ExtractText(html, url)
 	if err != nil {
 		return 0, 0, fmt.Errorf("extraction failed: %w", err)
@@ -131,7 +127,7 @@ func refetchURL(ctx context.Context, db *database.Database, fetcher *services.Fe
 
 	var summary string
 	if summarizer != nil {
-		fmt.Println("Summarising ...")
+		slog.Info("summarising", "url", url)
 		var inTok, outTok int
 		summary, inTok, outTok, _ = summarizer.Summarize(ctx, title, text)
 		inputTok += inTok
@@ -161,9 +157,9 @@ func refetchURL(ctx context.Context, db *database.Database, fetcher *services.Fe
 		return inputTok, outputTok, fmt.Errorf("failed to update link: %w", err)
 	}
 
-	fmt.Printf("Updated: [%d] %s\n", existing.ID, title)
+	slog.Info("link updated", "id", existing.ID, "title", title)
 	if summary != "" {
-		fmt.Printf("\nSummary: %s\n", summary)
+		slog.Info("summary generated", "summary", summary)
 	}
 
 	return inputTok, outputTok, nil

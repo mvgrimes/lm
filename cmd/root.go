@@ -2,16 +2,18 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joho/godotenv"
-	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
-	"log/slog"
+	"github.com/willibrandon/mtlog"
+	"github.com/willibrandon/mtlog/core"
 
 	"mccwk.com/lm/internal/database"
+	"mccwk.com/lm/internal/logging"
 	"mccwk.com/lm/internal/tui"
 )
 
@@ -37,38 +39,31 @@ func Execute() {
 }
 
 func init() {
-	// err := godotenv.Load()
-	// if err != nil {
-	// 	slog.Warn("unable to load .env file", "err", err)
-	// }
-
 	slog.Debug(fmt.Sprintf("Version: %s", VERSION))
 
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Display debugging output")
 
-	setupLogging()
+	setupLogging(nil)
 }
 
-func setupLogging() {
-	// level := slog.LevelInfo
-	level := slog.LevelDebug
+// setupLogging configures the global slog logger backed by mtlog.
+// When sink is non-nil (TUI mode), output goes only to the in-memory sink so
+// that log lines do not corrupt the alternate-screen TUI.
+func setupLogging(sink *logging.MemorySink) {
+	level := core.InformationLevel
 	if debug {
-		level = slog.LevelDebug
+		level = core.DebugLevel
 	}
 
-	if os.Getenv("MODE") == "production" {
-		logger := slog.New(slog.NewJSONHandler(os.Stdout,
-			&slog.HandlerOptions{
-				Level: level,
-			}))
-		slog.SetDefault(logger)
+	var opts []mtlog.Option
+	if sink != nil {
+		opts = append(opts, mtlog.WithSink(sink))
 	} else {
-		logger := slog.New(tint.NewHandler(os.Stdout,
-			&tint.Options{
-				Level: level,
-			}))
-		slog.SetDefault(logger)
+		opts = append(opts, mtlog.WithConsole())
 	}
+	opts = append(opts, mtlog.WithMinimumLevel(level))
+
+	slog.SetDefault(mtlog.NewSlogLogger(opts...))
 }
 
 func configDir() (string, error) {
@@ -88,10 +83,15 @@ func startTUI() {
 		_ = loadEnvFile(dir)
 	}
 
+	// In TUI mode route all logs to an in-memory sink so they don't corrupt
+	// the alternate-screen display.
+	logSink := logging.NewMemorySink(logging.DefaultMaxEntries)
+	setupLogging(logSink)
+
 	db := database.New(dbPathFromEnv())
 	defer db.Close()
 
-	model := tui.NewModel(db, apiKeyFromEnv())
+	model := tui.NewModel(db, apiKeyFromEnv(), logSink)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
