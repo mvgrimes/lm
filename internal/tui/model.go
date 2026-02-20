@@ -189,14 +189,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasksModel.height = m.height
 		m.activitiesModel.width = m.width
 		m.activitiesModel.height = m.height
-		m.linksModel.width = m.width
-		m.linksModel.height = m.height
-		m.readLaterModel.width = m.width
-		m.readLaterModel.height = m.height
-		m.tagsModel.width = m.width
-		m.tagsModel.height = m.height
-		m.categoriesModel.width = m.width
-		m.categoriesModel.height = m.height
+
+		// Forward WindowSizeMsg to all tab models so their viewports are
+		// initialized regardless of which tab is currently active.
+		var wCmd tea.Cmd
+		m.linksModel, wCmd = m.linksModel.Update(msg)
+		if wCmd != nil {
+			cmds = append(cmds, wCmd)
+		}
+		m.readLaterModel, wCmd = m.readLaterModel.Update(msg)
+		if wCmd != nil {
+			cmds = append(cmds, wCmd)
+		}
+		m.tagsModel, wCmd = m.tagsModel.Update(msg)
+		if wCmd != nil {
+			cmds = append(cmds, wCmd)
+		}
+		m.categoriesModel, wCmd = m.categoriesModel.Update(msg)
+		if wCmd != nil {
+			cmds = append(cmds, wCmd)
+		}
 
 	case tasksLoadedMsg:
 		m.tasksModel = NewTasksModel(msg.tasks, m.db)
