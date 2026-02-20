@@ -241,7 +241,7 @@ func (m Model) updateAddLinkModal(msg tea.Msg) (Model, tea.Cmd) {
 
 	case addLinkCloseRequestedMsg:
 		m.showAddLinkModal = false
-		return m, nil
+		return m, m.loadTabData()
 
 	case linkProcessCompleteMsg:
 		extraCmd = m.loadTabData()

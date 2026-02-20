@@ -20,7 +20,7 @@ type AddLinkModel struct {
 	urlInput      textinput.Model
 	categoryInput textinput.Model
 	tagsInput     textinput.Model
-	focusIndex    int  // 0=url, 1=category, 2=tags, 3=summary viewport, 4=content viewport, 5=Save(btn), 6=Cancel(btn), 7=Close(btn)
+	focusIndex    int  // 0=url, 1=category, 2=tags, 3=summary viewport, 4=content viewport, 5=Save(btn), 6=Cancel(btn)
 	inModal       bool // whether rendered in modal
 
 	// Save/unsaved state
@@ -187,7 +187,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			m.focusIndex++
 			maxIdx := 2
 			if m.inModal {
-				maxIdx = 7
+				maxIdx = 6
 			}
 			if m.focusIndex > maxIdx {
 				m.focusIndex = 0
@@ -214,7 +214,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			minIdx := 0
 			maxIdx := 2
 			if m.inModal {
-				maxIdx = 7
+				maxIdx = 6
 			}
 			if m.focusIndex < minIdx {
 				m.focusIndex = maxIdx
@@ -335,11 +335,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 					}
 					return m, m.saveMetadata(db)
 				}
-				if m.focusIndex == 6 { // Cancel button
-					m = m.resetForm()
-					return m, nil
-				}
-				if m.focusIndex == 7 { // Close button
+				if m.focusIndex == 6 { // Cancel button — closes the dialog
 					return m, func() tea.Msg { return addLinkCloseRequestedMsg{} }
 				}
 			}
@@ -411,7 +407,11 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			}
 		}
 		m.savedTags = curTags
-		return m, notifyCmd("info", "Metadata saved.")
+		// Close the dialog after saving and notify
+		return m, tea.Batch(
+			notifyCmd("info", "Link saved!"),
+			func() tea.Msg { return addLinkCloseRequestedMsg{} },
+		)
 	}
 
 	// Update the focused input
@@ -773,16 +773,35 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 	content.WriteString(m.tagsInput.View() + "\n\n")
 
 	// Summary preview (if available)
-	if m.summary != "" {
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Summary:") + "\n")
-		summaryPreview := m.summary
-		if len(summaryPreview) > 200 {
-			summaryPreview = summaryPreview[:197] + "..."
+	summaryFocused := m.focusIndex == 3
+	summaryStyle := lipgloss.NewStyle().Bold(true)
+	if summaryFocused {
+		summaryStyle = summaryStyle.Foreground(lipgloss.Color("10"))
+	}
+	if m.summary != "" || summaryFocused {
+		label := "Summary:"
+		if summaryFocused {
+			label = "▶ Summary:"
 		}
-		content.WriteString(dimStyle.Render(summaryPreview) + "\n\n")
+		content.WriteString(summaryStyle.Render(label) + "\n")
+		if m.summary != "" {
+			summaryPreview := m.summary
+			if len(summaryPreview) > 200 {
+				summaryPreview = summaryPreview[:197] + "..."
+			}
+			content.WriteString(dimStyle.Render(summaryPreview) + "\n\n")
+		} else {
+			content.WriteString(dimStyle.Render("(summary will appear here after fetching)") + "\n\n")
+		}
 	}
 
-	// Buttons row (Save, Cancel, Close)
+	// Content section focus indicator (content not shown in modal view)
+	if m.focusIndex == 4 {
+		contentFocusStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+		content.WriteString(contentFocusStyle.Render("▶ Page Content: (visible in full view)") + "\n\n")
+	}
+
+	// Buttons row (Save, Cancel)
 	btnBase := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("8")).
@@ -796,20 +815,14 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 
 	cancelStyle := btnBase
 	if m.focusIndex == 6 {
-		cancelStyle = cancelStyle.Bold(true).Foreground(lipgloss.Color("11")).BorderForeground(lipgloss.Color("11"))
+		cancelStyle = cancelStyle.Bold(true).Foreground(lipgloss.Color("9")).BorderForeground(lipgloss.Color("9"))
 	}
 	cancelBtn := cancelStyle.Render(" Cancel ")
 
-	closeStyle := btnBase
-	if m.focusIndex == 7 {
-		closeStyle = closeStyle.Bold(true).Foreground(lipgloss.Color("9")).BorderForeground(lipgloss.Color("9"))
-	}
-	closeBtn := closeStyle.Render(" Close ")
-
-	content.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, saveBtn, "  ", cancelBtn, "  ", closeBtn) + "\n\n")
+	content.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, saveBtn, "  ", cancelBtn) + "\n\n")
 
 	// Help text
-	content.WriteString(dimStyle.Render("Tab: cycle • Enter: submit/save/click • Esc: close"))
+	content.WriteString(dimStyle.Render("Tab: cycle fields • Enter: submit/save/click • Esc: close"))
 
 	return content.String()
 }

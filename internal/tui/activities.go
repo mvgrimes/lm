@@ -138,6 +138,12 @@ func (m ActivitiesModel) Update(msg tea.Msg) (ActivitiesModel, tea.Cmd) {
 			return m.handleCreateMode(msg)
 		}
 
+	case addLinkCloseRequestedMsg:
+		if m.mode == activitiesAddLinkMode {
+			m.mode = activitiesViewMode
+			return m, nil
+		}
+
 	case linkProcessCompleteMsg:
 		if m.mode == activitiesAddLinkMode && len(m.activities) > 0 {
 			activityID := m.activities[m.cursor].ID
@@ -169,6 +175,13 @@ func (m ActivitiesModel) Update(msg tea.Msg) (ActivitiesModel, tea.Cmd) {
 		m.nameInput.SetValue("")
 		m.descInput.SetValue("")
 		return m, tea.Batch(m.loadActivities(), notifyCmd("info", "Activity created!"))
+	}
+
+	// Forward remaining messages to addLinkModel when in add link mode
+	// (handles linkProcessErrorMsg, metadataSavedMsg, tea.WindowSizeMsg, etc.)
+	if m.mode == activitiesAddLinkMode {
+		m.addLinkModel, cmd = m.addLinkModel.Update(msg, m.db, m.fetcher, m.extractor, m.summarizer, m.ctx)
+		return m, cmd
 	}
 
 	return m, nil
@@ -205,7 +218,8 @@ func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cm
 		// Add link to current activity
 		if len(m.activities) > 0 && m.cursor < len(m.activities) {
 			m.mode = activitiesAddLinkMode
-				m.addLinkModel = NewAddLinkModel()
+			m.addLinkModel = NewAddLinkModel()
+			m.addLinkModel.inModal = true
 			return m, func() tea.Msg {
 				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
 			}

@@ -139,6 +139,12 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 			return m.handleCreateMode(msg)
 		}
 
+	case addLinkCloseRequestedMsg:
+		if m.mode == tasksAddLinkMode {
+			m.mode = tasksViewMode
+			return m, nil
+		}
+
 	case linkProcessCompleteMsg:
 		if m.mode == tasksAddLinkMode && len(m.tasks) > 0 {
 			taskID := m.tasks[m.cursor].ID
@@ -173,6 +179,13 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 
 	case linkAddedToTaskMsg:
 		return m, nil
+	}
+
+	// Forward remaining messages to addLinkModel when in add link mode
+	// (handles linkProcessErrorMsg, metadataSavedMsg, tea.WindowSizeMsg, etc.)
+	if m.mode == tasksAddLinkMode {
+		m.addLinkModel, cmd = m.addLinkModel.Update(msg, m.db, m.fetcher, m.extractor, m.summarizer, m.ctx)
+		return m, cmd
 	}
 
 	return m, nil
@@ -211,7 +224,6 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 		// Add link to current task
 		if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
 			m.mode = tasksAddLinkMode
-				// Create a new add link model with the task ID
 			taskID := m.tasks[m.cursor].ID
 			m.addLinkModel = NewAddLinkModelForTask(&taskID)
 			m.addLinkModel.inModal = true
