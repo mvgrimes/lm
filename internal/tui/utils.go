@@ -27,6 +27,22 @@ func panelBorderColor(focused bool) string {
 	return "8"
 }
 
+// linkMatchesQuery returns true when a link matches every whitespace-separated
+// word in the query (case-insensitive AND search). Word order is ignored.
+func linkMatchesQuery(url, title, content, summary, query string) bool {
+	words := strings.Fields(strings.ToLower(query))
+	if len(words) == 0 {
+		return true
+	}
+	haystack := strings.ToLower(url + " " + title + " " + content + " " + summary)
+	for _, w := range words {
+		if !strings.Contains(haystack, w) {
+			return false
+		}
+	}
+	return true
+}
+
 // wrapText wraps text to the specified width, breaking on word boundaries
 func wrapText(text string, width int) string {
 	if width <= 0 {

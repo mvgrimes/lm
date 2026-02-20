@@ -349,10 +349,7 @@ func (m *ReadLaterModel) filterLinks() {
 	}
 	m.filteredLinks = []models.Link{}
 	for _, link := range m.links {
-		if strings.Contains(strings.ToLower(link.Url), query) ||
-			(link.Title.Valid && strings.Contains(strings.ToLower(link.Title.String), query)) ||
-			(link.Content.Valid && strings.Contains(strings.ToLower(link.Content.String), query)) ||
-			(link.Summary.Valid && strings.Contains(strings.ToLower(link.Summary.String), query)) {
+		if linkMatchesQuery(link.Url, link.Title.String, link.Content.String, link.Summary.String, query) {
 			m.filteredLinks = append(m.filteredLinks, link)
 		}
 	}
