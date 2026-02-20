@@ -16,6 +16,16 @@ import (
 	"mccwk.com/lm/internal/services"
 )
 
+// linksFocusArea tracks which UI element has keyboard focus in the Links tab.
+// 0=search, 1=list, 2=detail panel
+type linksFocusArea int
+
+const (
+	linksFocusSearch linksFocusArea = iota
+	linksFocusList
+	linksFocusDetail
+)
+
 type LinksModel struct {
 	links         []models.Link
 	filteredLinks []models.Link
@@ -24,8 +34,8 @@ type LinksModel struct {
 	ctx           context.Context
 
 	// Search functionality
-	searchInput   textinput.Model
-	searchFocused bool
+	searchInput textinput.Model
+	focus       linksFocusArea
 
 	// Detail view
 	detailViewport viewport.Model
@@ -52,10 +62,10 @@ func NewLinksModel(db *database.Database) LinksModel {
 	searchInput.Focus()
 
 	return LinksModel{
-		db:            db,
-		ctx:           context.Background(),
-		searchInput:   searchInput,
-		searchFocused: true,
+		db:          db,
+		ctx:         context.Background(),
+		searchInput: searchInput,
+		focus:       linksFocusSearch,
 	}
 }
 
@@ -114,60 +124,112 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Calculate half-page jump size from visible list height.
 		halfPage := (m.height - 15) / 2
 		if halfPage < 1 {
 			halfPage = 1
 		}
 
-		// Navigation keys are always intercepted before the search input sees them.
+		// Tab / Shift+Tab cycle focus between search → list → detail.
 		switch msg.String() {
-		case "up":
-			if m.cursor > 0 {
-				m.cursor--
-				m.updateDetailView()
+		case "tab":
+			m.focus = (m.focus + 1) % 3
+			if m.focus == linksFocusSearch {
+				m.searchInput.Focus()
+			} else {
+				m.searchInput.Blur()
 			}
 			return m, nil
-		case "down":
-			if m.cursor < len(m.filteredLinks)-1 {
-				m.cursor++
-				m.updateDetailView()
+		case "shift+tab":
+			m.focus = (m.focus + 2) % 3 // -1 mod 3
+			if m.focus == linksFocusSearch {
+				m.searchInput.Focus()
+			} else {
+				m.searchInput.Blur()
 			}
 			return m, nil
-		case "pgup", "ctrl+u":
-			if m.cursor > 0 {
+		}
+
+		switch m.focus {
+		case linksFocusList:
+			// List-focused: navigate with arrows/j/k, open with Enter, back to search with Esc.
+			switch msg.String() {
+			case "up", "k":
+				if m.cursor > 0 {
+					m.cursor--
+					m.updateDetailView()
+				}
+			case "down", "j":
+				if m.cursor < len(m.filteredLinks)-1 {
+					m.cursor++
+					m.updateDetailView()
+				}
+			case "pgup", "ctrl+u":
 				m.cursor -= halfPage
 				if m.cursor < 0 {
 					m.cursor = 0
 				}
 				m.updateDetailView()
-			}
-			return m, nil
-		case "pgdown", "ctrl+d":
-			if m.cursor < len(m.filteredLinks)-1 {
+			case "pgdown", "ctrl+d":
 				m.cursor += halfPage
 				if m.cursor >= len(m.filteredLinks) {
 					m.cursor = len(m.filteredLinks) - 1
 				}
 				m.updateDetailView()
+			case "enter":
+				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+					return m, m.openLink(m.filteredLinks[m.cursor].Url)
+				}
+			case "esc":
+				m.focus = linksFocusSearch
+				m.searchInput.Focus()
 			}
 			return m, nil
-		case "enter":
-			if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
-				return m, m.openLink(m.filteredLinks[m.cursor].Url)
-			}
-			return m, nil
-		case "esc":
-			// Clear the search filter; keep focus in the input.
-			m.searchInput.SetValue("")
-			m.filterLinks()
-			return m, nil
-		}
 
-		// All other keys feed the search input for live filtering.
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		m.filterLinks()
-		return m, cmd
+		case linksFocusDetail:
+			// Detail-focused: PgUp/PgDn scroll the viewport, Esc goes back.
+			switch msg.String() {
+			case "pgup", "pgdown", "ctrl+u", "ctrl+d":
+				if m.viewportReady {
+					m.detailViewport, cmd = m.detailViewport.Update(msg)
+					return m, cmd
+				}
+			case "esc":
+				m.focus = linksFocusSearch
+				m.searchInput.Focus()
+			}
+			return m, nil
+
+		default: // linksFocusSearch
+			// Up/Down always navigate the list even from search focus for convenience.
+			switch msg.String() {
+			case "up":
+				if m.cursor > 0 {
+					m.cursor--
+					m.updateDetailView()
+				}
+				return m, nil
+			case "down":
+				if m.cursor < len(m.filteredLinks)-1 {
+					m.cursor++
+					m.updateDetailView()
+				}
+				return m, nil
+			case "enter":
+				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+					return m, m.openLink(m.filteredLinks[m.cursor].Url)
+				}
+				return m, nil
+			case "esc":
+				// Clear the search filter
+				m.searchInput.SetValue("")
+				m.filterLinks()
+				return m, nil
+			}
+			// All other keys feed the search input for live filtering.
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.filterLinks()
+			return m, cmd
+		}
 
 	case linksLoadedMsg:
 		m.links = msg.links
@@ -241,19 +303,21 @@ func (m LinksModel) View() string {
 
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color("10")).
 		Padding(0, 1).
 		Width(leftWidth - 4)
 
-	searchBox := searchBoxStyle.
-		BorderForeground(lipgloss.Color("10")).
-		Render(m.searchInput.View())
+	searchBox := searchBoxStyle.Render(m.searchInput.View())
 
-	// Left panel - link list
+	// Left panel — link list; highlight border when list is focused.
+	leftBorderColor := lipgloss.Color("8")
+	if m.focus == linksFocusList {
+		leftBorderColor = lipgloss.Color("10")
+	}
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(leftBorderColor).
 		Padding(1)
 
 	selectedStyle := lipgloss.NewStyle().
@@ -331,11 +395,15 @@ func (m LinksModel) View() string {
 
 	leftPanel := leftPanelStyle.Render(leftContent)
 
-	// Right panel - detail view
+	// Right panel — detail view; highlight border when detail panel is focused.
+	rightBorderColor := lipgloss.Color("12")
+	if m.focus == linksFocusDetail {
+		rightBorderColor = lipgloss.Color("10")
+	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("12")).
+		BorderForeground(rightBorderColor).
 		Padding(1)
 
 	var rightContent string
@@ -368,9 +436,18 @@ func (m LinksModel) View() string {
 	// Combine panels
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 
-	// Help text
+	// Help text — adapt to current focus area
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpText := "\n" + helpStyle.Render("type to search • ↑/↓: navigate • PgUp/PgDn Ctrl+U/D: jump • Enter: open • Esc: clear search")
+	var helpMsg string
+	switch m.focus {
+	case linksFocusList:
+		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter: open • Esc: back to search"
+	case linksFocusDetail:
+		helpMsg = "Tab: focus search • PgUp/PgDn: scroll • Esc: back to search"
+	default:
+		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • Enter: open • Esc: clear search"
+	}
+	helpText := "\n" + helpStyle.Render(helpMsg)
 
 	return mainContent + helpText
 }
