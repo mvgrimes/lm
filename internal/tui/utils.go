@@ -1,6 +1,32 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/glamour"
+)
+
+// renderMarkdown renders a markdown string for display in the terminal using
+// glamour.  width is the viewport width; glamour's default style adds 2-char
+// margins on each side, so the word-wrap is set to width-4.
+func renderMarkdown(md string, width int) string {
+	ww := width - 4
+	if ww < 20 {
+		ww = 20
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(ww),
+	)
+	if err != nil {
+		return md
+	}
+	out, err := r.Render(md)
+	if err != nil {
+		return md
+	}
+	return out
+}
 
 // panelFocus is shared by all split-view tabs.
 // 0=search box, 1=list panel, 2=right/detail panel

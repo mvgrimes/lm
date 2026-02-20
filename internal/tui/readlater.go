@@ -80,6 +80,7 @@ func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
 			m.detailViewport.Width = rightWidth - 4
 			m.detailViewport.Height = detailHeight
 		}
+		m.updateDetailView()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -367,29 +368,21 @@ func (m *ReadLaterModel) updateDetailView() {
 		return
 	}
 	link := m.filteredLinks[m.cursor]
-	wrapWidth := m.detailViewport.Width
-	if wrapWidth < 20 {
-		wrapWidth = 20
-	}
 
-	var content strings.Builder
+	var doc strings.Builder
+
 	if link.Title.Valid && link.Title.String != "" {
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render(wrapText(link.Title.String, wrapWidth)))
-		content.WriteString("\n\n")
+		doc.WriteString("# " + link.Title.String + "\n\n")
 	}
 	if link.Summary.Valid && link.Summary.String != "" {
-		summaryStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
-		content.WriteString(summaryStyle.Render("Summary:") + "\n")
-		content.WriteString(wrapText(link.Summary.String, wrapWidth))
-		content.WriteString("\n\n")
+		doc.WriteString("**Summary:** " + link.Summary.String + "\n\n")
 	}
 	if link.Content.Valid && link.Content.String != "" {
-		contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Content:") + "\n")
-		content.WriteString(contentStyle.Render(wrapText(link.Content.String, wrapWidth)))
+		doc.WriteString("---\n\n")
+		doc.WriteString(link.Content.String)
 	}
 
-	m.detailViewport.SetContent(content.String())
+	m.detailViewport.SetContent(renderMarkdown(doc.String(), m.detailViewport.Width))
 	m.detailViewport.GotoTop()
 }
 

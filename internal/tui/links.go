@@ -126,6 +126,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			m.detailViewport.Width = rightWidth - 4
 			m.detailViewport.Height = detailHeight
 		}
+		m.updateDetailView()
 
 		return m, nil
 
@@ -560,75 +561,45 @@ func (m *LinksModel) updateDetailView() {
 
 	link := m.filteredLinks[m.cursor]
 
-	// Get viewport width for wrapping
-	wrapWidth := m.detailViewport.Width
-	if wrapWidth < 20 {
-		wrapWidth = 20
-	}
-
-	var content strings.Builder
+	var doc strings.Builder
 
 	// Title
 	if link.Title.Valid && link.Title.String != "" {
-		wrapped := wrapText(link.Title.String, wrapWidth)
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render(wrapped))
-		content.WriteString("\n\n")
+		doc.WriteString("# " + link.Title.String + "\n\n")
 	}
 
 	// Summary
 	if link.Summary.Valid && link.Summary.String != "" {
-		summaryStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("11")).
-			Bold(true)
-		content.WriteString(summaryStyle.Render("Summary:") + "\n")
-		wrapped := wrapText(link.Summary.String, wrapWidth)
-		content.WriteString(wrapped)
-		content.WriteString("\n\n")
+		doc.WriteString("**Summary:** " + link.Summary.String + "\n\n")
 	}
 
-	// Tags (if any)
+	// Tags
 	tags, _ := m.db.Queries.GetTagsForLink(m.ctx, link.ID)
 	if len(tags) > 0 {
-		tagStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-		content.WriteString(tagStyle.Render("Tags: "))
-		tagNames := []string{}
-		for _, tag := range tags {
-			tagNames = append(tagNames, tag.Name)
+		tagNames := make([]string, len(tags))
+		for i, t := range tags {
+			tagNames[i] = t.Name
 		}
-		tagsText := strings.Join(tagNames, ", ")
-		wrapped := wrapText(tagsText, wrapWidth-7) // Account for "Tags: " prefix
-		content.WriteString(wrapped)
-		content.WriteString("\n\n")
+		doc.WriteString("**Tags:** " + strings.Join(tagNames, ", ") + "\n\n")
 	}
 
-	// Categories (if any)
+	// Categories
 	categories, _ := m.db.Queries.GetCategoriesForLink(m.ctx, link.ID)
 	if len(categories) > 0 {
-		catStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-		content.WriteString(catStyle.Render("Categories: "))
-		catNames := []string{}
-		for _, cat := range categories {
-			catNames = append(catNames, cat.Name)
+		catNames := make([]string, len(categories))
+		for i, c := range categories {
+			catNames[i] = c.Name
 		}
-		catsText := strings.Join(catNames, ", ")
-		wrapped := wrapText(catsText, wrapWidth-12) // Account for "Categories: " prefix
-		content.WriteString(wrapped)
-		content.WriteString("\n\n")
+		doc.WriteString("**Categories:** " + strings.Join(catNames, ", ") + "\n\n")
 	}
 
-	// Content
+	// Content (already markdown from the extractor)
 	if link.Content.Valid && link.Content.String != "" {
-		contentStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("7"))
-		contentLabelStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("11")) // Yellow color
-		content.WriteString(contentLabelStyle.Render("Content:") + "\n")
-		wrapped := wrapText(link.Content.String, wrapWidth)
-		content.WriteString(contentStyle.Render(wrapped))
+		doc.WriteString("---\n\n")
+		doc.WriteString(link.Content.String)
 	}
 
-	m.detailViewport.SetContent(content.String())
+	m.detailViewport.SetContent(renderMarkdown(doc.String(), m.detailViewport.Width))
 	m.detailViewport.GotoTop()
 }
 
