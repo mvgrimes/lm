@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -60,7 +61,10 @@ type LinksModel struct {
 	editMode      bool
 	editLinkModel EditLinkModel
 
-	// Services for edit dialog
+	// Refetch state
+	refetching bool
+
+	// Services for edit dialog and refetch
 	fetcher    *services.Fetcher
 	extractor  *services.Extractor
 	summarizer *services.Summarizer
@@ -206,6 +210,11 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					return m, m.openLink(m.filteredLinks[m.cursor].Url)
 				}
+			case "ctrl+r":
+				if !m.refetching && len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+					m.refetching = true
+					return m, m.refetchCurrentLink(m.filteredLinks[m.cursor])
+				}
 			case "ctrl+a":
 				return m, func() tea.Msg { return openAddLinkModalMsg{} }
 			case "esc":
@@ -229,6 +238,11 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			case "down", "j":
 				if m.viewportReady {
 					m.detailViewport.ScrollDown(1)
+				}
+			case "ctrl+r":
+				if !m.refetching && len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+					m.refetching = true
+					return m, m.refetchCurrentLink(m.filteredLinks[m.cursor])
 				}
 			case "esc":
 				m.focus = panelFocusSearch
@@ -276,6 +290,13 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			m.updateDetailView()
 		}
 		return m, nil
+
+	case linkRefetchedMsg:
+		m.refetching = false
+		if msg.err != nil {
+			return m, notifyCmd("error", "Refetch failed: "+msg.err.Error())
+		}
+		return m, tea.Batch(m.loadLinks(), notifyCmd("success", "Refetched: "+msg.title))
 
 	case linkDeletedMsg:
 		return m, m.loadLinks()
@@ -461,6 +482,10 @@ func (m LinksModel) View() string {
 		urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 		titleLine += urlStyle.Render(link.Url) + "\n\n"
 
+		if m.refetching {
+			titleLine += dimStyle.Render("Refetching...") + "\n\n"
+		}
+
 		rightContent = titleLine + m.detailViewport.View()
 
 		// Show scroll indicator
@@ -485,9 +510,9 @@ func (m LinksModel) View() string {
 	var helpMsg string
 	switch m.focus {
 	case panelFocusList:
-		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Enter/Ctrl+O: open • Ctrl+A: add • s: sort • Esc: search"
+		helpMsg = "Tab: detail • ↑/↓/j/k: navigate • PgUp/PgDn/Ctrl+U/D: jump • Enter/Ctrl+O: open • Ctrl+A: add • Ctrl+R: refetch • s: sort • Esc: search"
 	case panelFocusDetail:
-		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+O: open • Esc: search"
+		helpMsg = "Tab: search • ↑/↓/j/k/PgUp/PgDn: scroll • Ctrl+O: open • Ctrl+R: refetch • Esc: search"
 	default:
 		helpMsg = "type to search • Tab: list • ↑/↓: navigate • Enter/Ctrl+O: open • Ctrl+A: add • Esc: clear"
 	}
@@ -635,3 +660,48 @@ func (m LinksModel) deleteLink(linkID int64) tea.Cmd {
 }
 
 type linkDeletedMsg struct{}
+
+type linkRefetchedMsg struct {
+	title string
+	err   error
+}
+
+func (m LinksModel) refetchCurrentLink(link models.Link) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		html, err := m.fetcher.FetchURL(ctx, link.Url)
+		if err != nil {
+			return linkRefetchedMsg{err: fmt.Errorf("fetch failed: %w", err)}
+		}
+		_ = m.db.Queries.UpdateLinkFetchedAt(ctx, link.ID)
+
+		title, text, err := m.extractor.ExtractText(html, link.Url)
+		if err != nil {
+			return linkRefetchedMsg{err: fmt.Errorf("extraction failed: %w", err)}
+		}
+		content := m.extractor.TruncateText(text, 10000)
+
+		var summary string
+		if m.summarizer != nil {
+			summary, _, _, _ = m.summarizer.Summarize(ctx, title, text)
+			_ = m.db.Queries.UpdateLinkSummarizedAt(ctx, link.ID)
+		}
+
+		_, err = m.db.Queries.UpdateLink(ctx, models.UpdateLinkParams{
+			ID:      link.ID,
+			Title:   sql.NullString{String: title, Valid: title != ""},
+			Content: sql.NullString{String: content, Valid: content != ""},
+			Summary: sql.NullString{String: summary, Valid: summary != ""},
+			Status:  link.Status,
+		})
+		if err != nil {
+			return linkRefetchedMsg{err: fmt.Errorf("failed to save: %w", err)}
+		}
+
+		if title == "" {
+			title = link.Url
+		}
+		return linkRefetchedMsg{title: title}
+	}
+}
