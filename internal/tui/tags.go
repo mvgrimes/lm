@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"mccwk.com/lk/internal/database"
-	"mccwk.com/lk/internal/models"
+	"mccwk.com/lm/internal/database"
+	"mccwk.com/lm/internal/models"
 )
 
 type tagsMode int

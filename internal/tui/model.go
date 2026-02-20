@@ -5,9 +5,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"mccwk.com/lk/internal/database"
-	"mccwk.com/lk/internal/models"
-	"mccwk.com/lk/internal/services"
+	"mccwk.com/lm/internal/database"
+	"mccwk.com/lm/internal/models"
+	"mccwk.com/lm/internal/services"
 )
 
 type Tab int
@@ -254,7 +254,7 @@ func (m Model) renderTabs() string {
 		Foreground(lipgloss.Color("6")).
 		Padding(0, 2)
 
-	title := titleStyle.Render("LK · Link Manager")
+	title := titleStyle.Render("lm · Link Manager")
 
 	// Join tabs
 	tabBar := lipgloss.JoinHorizontal(lipgloss.Bottom, renderedTabs...)

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"mccwk.com/lk/cmd"
+	"mccwk.com/lm/cmd"
 )
 
 func main() {

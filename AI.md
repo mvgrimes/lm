@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-**Link Manager** (`lk`) is a terminal-based application for managing links, tasks, knowledge, and reading lists. It provides a rich TUI (Terminal User Interface) for organizing web content with AI-powered summarization capabilities.
+**Link Manager** (`lm`) is a terminal-based application for managing links, tasks, knowledge, and reading lists. It provides a rich TUI (Terminal User Interface) for organizing web content with AI-powered summarization capabilities.
 
-**Version**: 1.0.0  
-**Language**: Go 1.24  
-**Module**: `mccwk.com/lk`
+**Version**: 1.0.0
+**Language**: Go 1.24
+**Module**: `mccwk.com/lm`
 
 ## Core Functionality
 
@@ -101,19 +101,19 @@
 
 ### Entry Point
 - **main.go**: Minimal entry point that calls `cmd.Execute()`
-- **cmd/root.go**: 
+- **cmd/root.go**:
   - Cobra command setup with `-d/--debug` flag
   - Environment variable loading via godotenv
   - Database initialization
   - TUI launch with Bubbletea
 
 ### Database Layer
-- **database.go**: 
+- **database.go**:
   - Database connection management
   - Automatic migrations on startup using embedded migration files
   - Uses `modernc.org/sqlite` (pure Go, no CGO)
 
-- **queries.sql**: 
+- **queries.sql**:
   - Type-safe SQL queries via sqlc
   - CRUD operations for all entities
   - Relationship management (linking/unlinking)
@@ -148,12 +148,12 @@
 ### Environment Variables (.env)
 ```bash
 OPENAI_API_KEY=your_api_key_here  # Optional, for AI summarization
-DB_PATH=/path/to/database.db       # Optional, defaults to ~/.lk.db
+DB_PATH=/path/to/database.db       # Optional, defaults to ~/.lm.db
 MODE=development                    # or "production" for JSON logging
 ```
 
 ### Database Location
-- Default: `~/.lk.db`
+- Default: `~/.lm.db`
 - Configurable via `DB_PATH` environment variable
 
 ## Build and Run
@@ -161,15 +161,15 @@ MODE=development                    # or "production" for JSON logging
 ### Commands
 ```bash
 # Build
-go build -o lk main.go
+go build -o lm main.go
 make build
 just build
 
 # Run
-./lk
+./lm
 
 # Debug mode
-./lk -d
+./lm -d
 ```
 
 ### Requirements
@@ -225,7 +225,7 @@ Migrations run automatically on application startup.
 The application uses a **tab-based interface** with tabs displayed across the top:
 - `[ Links ]  Tasks  Read Later  Tags  Categories`
 - Active tab is highlighted with bold text and colored border
-- Title bar shows "LK · Link Manager"
+- Title bar shows "lm · Link Manager"
 - Tab content fills the rest of the screen
 
 ### Tab-Specific Features
@@ -244,7 +244,7 @@ The application uses a **tab-based interface** with tabs displayed across the to
 - Open all task links in browser with `o` key
 - Toggle task completion with `c` key
 
-#### Read Later Tab  
+#### Read Later Tab
 - **Split-view layout**: Link list (left 35%) | Details (right 65%)
 - Shows only links with status="read_later"
 - Detail view with scrollable content
@@ -300,7 +300,7 @@ The application uses a **tab-based interface** with tabs displayed across the to
 
 1. **Database**: Uses sqlc for type-safe queries. Always regenerate after modifying `queries.sql`
 2. **Migrations**: Add new .sql files to `internal/database/migrations/` with goose format
-3. **TUI Architecture**: 
+3. **TUI Architecture**:
    - Bubbletea follows Elm architecture (Model-Update-View)
    - Main model in `model.go` handles tab switching and modal display
    - Each tab is a separate component: `links.go`, `tasks.go`, `readlater.go`, `tags.go`, `categories.go`
@@ -310,7 +310,7 @@ The application uses a **tab-based interface** with tabs displayed across the to
 4. **Logging**: Uses slog. Debug level by default in development, configurable via `-d` flag
 5. **No CGO**: Project uses pure Go SQLite implementation - no C compiler needed
 6. **Git**: Repository is already initialized (`.git` directory present)
-7. **Binary**: `lk` binary is built and present in project root
+7. **Binary**: `lm` binary is built and present in project root
 8. **Code Style**: Standard Go conventions, uses early returns and error handling
 9. **Layout Pattern**: Links and Read Later tabs use split-view (35% list, 65% detail) with viewport for scrolling
 10. **Color Scheme**: Uses ANSI colors - 6=cyan (titles), 10=green (selected), 243=dim gray (secondary), 12=blue (links), etc.

@@ -9,7 +9,7 @@ import (
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
-	"mccwk.com/lk/internal/models"
+	"mccwk.com/lm/internal/models"
 )
 
 //go:embed migrations/*.sql

@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pkg/browser"
 
-	"mccwk.com/lk/internal/database"
-	"mccwk.com/lk/internal/models"
-	"mccwk.com/lk/internal/services"
+	"mccwk.com/lm/internal/database"
+	"mccwk.com/lm/internal/models"
+	"mccwk.com/lm/internal/services"
 )
 
 type LinksModel struct {

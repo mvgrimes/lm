@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 	"log/slog"
 
-	"mccwk.com/lk/internal/database"
-	"mccwk.com/lk/internal/tui"
+	"mccwk.com/lm/internal/database"
+	"mccwk.com/lm/internal/tui"
 )
 
 const VERSION = "1.0.0"
@@ -22,7 +22,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "lk",
+	Use:   "lm",
 	Short: "Link manager",
 	Run: func(cmd *cobra.Command, args []string) {
 		startTUI()
@@ -83,7 +83,7 @@ func startTUI() {
 			slog.Error("failed to get home directory", "error", err)
 			os.Exit(1)
 		}
-		dbPath = filepath.Join(homeDir, ".lk.db")
+		dbPath = filepath.Join(homeDir, ".lm.db")
 	}
 
 	// Get OpenAI API key from environment

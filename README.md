@@ -27,7 +27,7 @@ git clone <your-repo-url>
 cd links
 
 # Build the application
-go build -o lk main.go
+go build -o lm main.go
 
 # Or use make/just
 make build
@@ -43,7 +43,7 @@ Create a `.env` file in the project root (or copy `.env.example`):
 # OpenAI API Key for link summarization (optional)
 OPENAI_API_KEY=your_api_key_here
 
-# Database path (optional, defaults to ~/.lk.db)
+# Database path (optional, defaults to ~/.lm.db)
 DB_PATH=/path/to/your/database.db
 
 # Mode (production or development)
@@ -55,7 +55,7 @@ MODE=development
 Simply run the application to start the TUI:
 
 ```bash
-./lk
+./lm
 ```
 
 **Note**: The application requires an interactive terminal. If you see a TTY error, make sure you're running it directly in your terminal, not through a script or non-interactive session.
