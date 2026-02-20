@@ -2,10 +2,15 @@ package services
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/PuerkitoBio/goquery"
 )
+
+var multipleBlankLines = regexp.MustCompile(`\n{3,}`)
 
 type Extractor struct{}
 
@@ -13,61 +18,48 @@ func NewExtractor() *Extractor {
 	return &Extractor{}
 }
 
-// ExtractText parses HTML content and extracts readable text
-func (e *Extractor) ExtractText(html string) (title string, text string, err error) {
+// ExtractText parses HTML content and returns the title and content as Markdown.
+// The pageURL is used to resolve relative links to absolute URLs.
+func (e *Extractor) ExtractText(html, pageURL string) (title string, text string, err error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		return "", "", fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
 	// Extract title
-	title = doc.Find("title").First().Text()
-	title = strings.TrimSpace(title)
+	title = strings.TrimSpace(doc.Find("title").First().Text())
 
-	// Remove script and style elements
-	doc.Find("script, style, nav, header, footer, aside").Each(func(i int, s *goquery.Selection) {
-		s.Remove()
-	})
+	// Remove noisy structural elements; script/style are also handled by the
+	// converter but removing them first keeps content selection cleaner.
+	doc.Find("script, style, nav, header, footer, aside").Remove()
 
-	// Extract text from main content areas
-	var textParts []string
-
-	// Try to find main content area
-	mainContent := doc.Find("article, main, .content, #content, .post, .entry-content")
+	// Prefer a focused content area; fall back to the whole body.
+	var contentHTML string
+	mainContent := doc.Find("article, main, [role=main], .content, #content, .post, .entry-content").First()
 	if mainContent.Length() > 0 {
-		mainContent.Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" {
-				textParts = append(textParts, text)
-			}
-		})
+		contentHTML, err = mainContent.Html()
 	} else {
-		// Fallback to paragraphs
-		doc.Find("p, h1, h2, h3, h4, h5, h6, li").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" {
-				textParts = append(textParts, text)
-			}
-		})
+		contentHTML, err = doc.Find("body").Html()
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("failed to extract content HTML: %w", err)
 	}
 
-	// Join all text parts
-	text = strings.Join(textParts, "\n\n")
+	md, err := htmltomarkdown.ConvertString(contentHTML, converter.WithDomain(pageURL))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to convert HTML to markdown: %w", err)
+	}
 
-	// Clean up extra whitespace and collapse to readable format
-	text = e.CollapseWhitespace(text)
-	text = strings.TrimSpace(text)
-
+	text = strings.TrimSpace(multipleBlankLines.ReplaceAllString(md, "\n\n"))
 	return title, text, nil
 }
 
-// TruncateText truncates text to a maximum length
+// TruncateText truncates text to a maximum length at a word boundary.
 func (e *Extractor) TruncateText(text string, maxLength int) string {
 	if len(text) <= maxLength {
 		return text
 	}
 
-	// Try to truncate at a word boundary
 	truncated := text[:maxLength]
 	lastSpace := strings.LastIndex(truncated, " ")
 	if lastSpace > maxLength/2 {
@@ -75,22 +67,4 @@ func (e *Extractor) TruncateText(text string, maxLength int) string {
 	}
 
 	return truncated + "..."
-}
-
-// CollapseWhitespace reduces multiple whitespace to single spaces while preserving paragraphs
-func (e *Extractor) CollapseWhitespace(text string) string {
-	// Split into paragraphs (separated by multiple newlines)
-	paragraphs := strings.Split(text, "\n\n")
-
-	var cleaned []string
-	for _, para := range paragraphs {
-		// For each paragraph, collapse all whitespace to single spaces
-		fields := strings.Fields(para) // Splits on any whitespace
-		if len(fields) > 0 {
-			cleaned = append(cleaned, strings.Join(fields, " "))
-		}
-	}
-
-	// Join paragraphs with single empty line (two newlines)
-	return strings.Join(cleaned, "\n\n")
 }

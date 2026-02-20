@@ -342,7 +342,7 @@ func (m EditLinkModel) reloadContent() tea.Cmd {
 		}
 
 		// Extract text
-		title, text, err := m.extractor.ExtractText(html)
+		title, text, err := m.extractor.ExtractText(html, m.link.Url)
 		if err != nil {
 			return editLinkErrorMsg{err: fmt.Errorf("extraction failed: %w", err)}
 		}

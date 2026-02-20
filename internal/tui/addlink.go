@@ -890,7 +890,7 @@ func (m AddLinkModel) fetchLink(url string, db *database.Database, fetcher *serv
 // extractLink is stage 2: extract text from fetched HTML.
 func (m AddLinkModel) extractLink(url, html string, extractor *services.Extractor) tea.Cmd {
 	return func() tea.Msg {
-		title, text, err := extractor.ExtractText(html)
+		title, text, err := extractor.ExtractText(html, url)
 		if err != nil {
 			return linkProcessErrorMsg{err: fmt.Errorf("extraction failed: %w", err)}
 		}

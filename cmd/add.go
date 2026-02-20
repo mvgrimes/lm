@@ -152,7 +152,7 @@ func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetche
 	}
 
 	fmt.Println("Extracting content ...")
-	title, text, err := extractor.ExtractText(html)
+	title, text, err := extractor.ExtractText(html, url)
 	if err != nil {
 		return 0, 0, fmt.Errorf("extraction failed: %w", err)
 	}
