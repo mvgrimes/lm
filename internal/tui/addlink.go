@@ -897,6 +897,7 @@ func (m AddLinkModel) fetchLink(url string, db *database.Database, fetcher *serv
 				summary:  existingLink.Summary.String,
 				category: "",
 				tags:     []string{},
+				llmCost:  0,
 			}
 		}
 		html, err := fetcher.FetchURL(ctx, url)
@@ -926,11 +927,21 @@ func (m AddLinkModel) summarizeAndSave(url, title, text, content, preview string
 		var summary string
 		var category string
 		var tags []string
+		var totalInputTokens, totalOutputTokens int
 
 		if summarizer != nil {
-			summary, _ = summarizer.Summarize(ctx, title, text)
-			category, tags, _ = summarizer.SuggestMetadata(ctx, title, text)
+			var inTok, outTok int
+			summary, inTok, outTok, _ = summarizer.Summarize(ctx, title, text)
+			totalInputTokens += inTok
+			totalOutputTokens += outTok
+			category, tags, inTok, outTok, _ = summarizer.SuggestMetadata(ctx, title, text)
+			totalInputTokens += inTok
+			totalOutputTokens += outTok
 		}
+
+		// GPT-4o-mini pricing: $0.150/1M input tokens, $0.600/1M output tokens
+		llmCost := float64(totalInputTokens)*0.15/1_000_000.0 +
+			float64(totalOutputTokens)*0.60/1_000_000.0
 
 		if category == "" {
 			category = "General"
@@ -956,6 +967,7 @@ func (m AddLinkModel) summarizeAndSave(url, title, text, content, preview string
 			summary:  summary,
 			category: category,
 			tags:     tags,
+			llmCost:  llmCost,
 		}
 	}
 }
@@ -981,6 +993,7 @@ type linkProcessCompleteMsg struct {
 	summary  string
 	category string
 	tags     []string
+	llmCost  float64 // USD cost of LLM calls (0 if no LLM was used)
 }
 
 type linkProcessErrorMsg struct {

@@ -17,10 +17,11 @@ func NewSummarizer(apiKey string) *Summarizer {
 	}
 }
 
-// Summarize generates a summary of the given text using OpenAI
-func (s *Summarizer) Summarize(ctx context.Context, title, text string) (string, error) {
+// Summarize generates a summary of the given text using OpenAI.
+// Returns the summary text, input token count, output token count, and any error.
+func (s *Summarizer) Summarize(ctx context.Context, title, text string) (string, int, int, error) {
 	if s.client == nil {
-		return "", fmt.Errorf("OpenAI client not configured")
+		return "", 0, 0, fmt.Errorf("OpenAI client not configured")
 	}
 
 	// Truncate text if too long (GPT-4 has limits)
@@ -51,20 +52,21 @@ func (s *Summarizer) Summarize(ctx context.Context, title, text string) (string,
 	)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to generate summary: %w", err)
+		return "", 0, 0, fmt.Errorf("failed to generate summary: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no summary generated")
+		return "", 0, 0, fmt.Errorf("no summary generated")
 	}
 
-	return resp.Choices[0].Message.Content, nil
+	return resp.Choices[0].Message.Content, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, nil
 }
 
-// SuggestMetadata generates suggested category and tags for the given content
-func (s *Summarizer) SuggestMetadata(ctx context.Context, title, text string) (category string, tags []string, err error) {
+// SuggestMetadata generates suggested category and tags for the given content.
+// Returns the category, tags, input token count, output token count, and any error.
+func (s *Summarizer) SuggestMetadata(ctx context.Context, title, text string) (category string, tags []string, inputTokens int, outputTokens int, err error) {
 	if s.client == nil {
-		return "", nil, fmt.Errorf("OpenAI client not configured")
+		return "", nil, 0, 0, fmt.Errorf("OpenAI client not configured")
 	}
 
 	// Truncate text if too long
@@ -106,16 +108,17 @@ Tags: <tag1>, <tag2>, <tag3>`, title, text)
 	)
 
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to generate suggestions: %w", err)
+		return "", nil, 0, 0, fmt.Errorf("failed to generate suggestions: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
-		return "", nil, fmt.Errorf("no suggestions generated")
+		return "", nil, 0, 0, fmt.Errorf("no suggestions generated")
 	}
 
 	// Parse the response
 	response := resp.Choices[0].Message.Content
-	return parseMetadataResponse(response)
+	category, tags, err = parseMetadataResponse(response)
+	return category, tags, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, err
 }
 
 // parseMetadataResponse parses the LLM response to extract category and tags

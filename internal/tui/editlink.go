@@ -353,7 +353,7 @@ func (m EditLinkModel) reloadContent() tea.Cmd {
 		// Generate summary if OpenAI is configured
 		var summary string
 		if m.summarizer != nil {
-			summary, _ = m.summarizer.Summarize(m.ctx, title, text)
+			summary, _, _, _ = m.summarizer.Summarize(m.ctx, title, text)
 		}
 
 		// Update link

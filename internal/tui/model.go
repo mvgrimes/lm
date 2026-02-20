@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -67,6 +68,9 @@ type Model struct {
 	// Add link modal
 	addLinkModel     AddLinkModel
 	showAddLinkModal bool
+
+	// LLM cost tracking
+	totalLLMCost float64
 
 	// Notifications overlay
 	alert bubbleup.AlertModel
@@ -245,6 +249,9 @@ func (m Model) updateAddLinkModal(msg tea.Msg) (Model, tea.Cmd) {
 
 	case linkProcessCompleteMsg:
 		extraCmd = m.loadTabData()
+		if msg.llmCost > 0 {
+			m.totalLLMCost += msg.llmCost
+		}
 
 	case linkProcessErrorMsg:
 		// modal stays open to show retry option
@@ -331,9 +338,14 @@ func (m Model) renderCurrentTab() string {
 		content = m.categoriesModel.View()
 	}
 
+	footerText := "Ctrl+A: add link • Ctrl+N/P: prev/next tab • Ctrl+C: quit"
+	if m.totalLLMCost > 0 {
+		costStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+		footerText += costStyle.Render(fmt.Sprintf(" • LLM: $%.5f", m.totalLLMCost))
+	}
 	footer := "\n" + lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render("Ctrl+A: add link • Ctrl+N/P: prev/next tab • Ctrl+C: quit")
+		Render(footerText)
 
 	contentStyle := lipgloss.NewStyle().
 		MaxHeight(availableHeight)
