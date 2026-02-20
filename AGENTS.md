@@ -29,6 +29,7 @@
 - **AI Summarization**: OpenAI API (optional)
 - **HTML Parsing**: goquery for content extraction
 - **Logging**: slog with tint for colored console output
+- This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
 
 ### Project Structure
 ```
