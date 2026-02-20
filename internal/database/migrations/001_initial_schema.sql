@@ -93,7 +93,7 @@ CREATE TRIGGER links_fts_update AFTER UPDATE ON links BEGIN UPDATE links_fts SET
 
 CREATE TRIGGER links_fts_delete AFTER DELETE ON links BEGIN DELETE FROM links_fts WHERE rowid = old.id; END;
 
-+goose Down
+-- +goose Down
 DROP TRIGGER IF EXISTS links_fts_delete;
 DROP TRIGGER IF EXISTS links_fts_update;
 DROP TRIGGER IF EXISTS links_fts_insert;
