@@ -61,17 +61,17 @@ func NewAddLinkModelForTask(taskID *int64) AddLinkModel {
 	urlInput.Placeholder = "https://example.com"
 	urlInput.Focus()
 	urlInput.Width = 40
-	urlInput.Prompt = "URL: "
+	urlInput.Prompt = "> "
 
 	categoryInput := textinput.New()
 	categoryInput.Placeholder = "e.g., Technology"
 	categoryInput.Width = 40
-	categoryInput.Prompt = "Category: "
+	categoryInput.Prompt = "> "
 
 	tagsInput := textinput.New()
 	tagsInput.Placeholder = "e.g., golang, programming, tutorial"
 	tagsInput.Width = 40
-	tagsInput.Prompt = "Tags: "
+	tagsInput.Prompt = "> "
 
 	return AddLinkModel{
 		urlInput:      urlInput,
@@ -527,7 +527,7 @@ func (m AddLinkModel) View() string {
 		leftContent = titleStyle.Render("Add Link to Task")
 	}
 	leftContent += "\n\n"
-	leftContent += m.urlInput.View() + "\n\n"
+	leftContent += lipgloss.NewStyle().Bold(true).Render("URL:") + "\n" + m.urlInput.View() + "\n\n"
 	// Highlight unsaved fields
 	unsavedCat := m.linkID != nil && strings.TrimSpace(m.categoryInput.Value()) != strings.TrimSpace(m.savedCategory)
 	unsavedTags := false
