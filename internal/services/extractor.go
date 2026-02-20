@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	multipleBlankLines = regexp.MustCompile(`\n{3,}`)
+	multipleBlankLines = regexp.MustCompile(`\n\p{Z}*(\n\p{Z}*)+\n`)
 	// mdImage matches ![alt](url) — images must be replaced before links so
 	// the image-inside-link pattern [![alt](img)](link) is handled correctly.
 	mdImage = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
@@ -56,6 +56,8 @@ func (e *Extractor) ExtractText(html, pageURL string) (title string, text string
 	if err != nil {
 		return "", "", fmt.Errorf("failed to convert HTML to markdown: %w", err)
 	}
+
+	// fmt.Println(strings.ReplaceAll(strings.ReplaceAll(md, " ", "."), "\n", "\\n\n"))
 
 	// Replace images with a short placeholder, keeping alt text when present.
 	md = mdImage.ReplaceAllStringFunc(md, func(match string) string {
