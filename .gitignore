@@ -17,6 +17,9 @@ vendor/
 # Tickets
 .tickets/
 
+# Workspaces
+trees/
+
 # Go workspace file
 go.work
 

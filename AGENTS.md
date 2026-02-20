@@ -29,7 +29,7 @@
 - **AI Summarization**: OpenAI API (optional)
 - **HTML Parsing**: goquery for content extraction
 - **Logging**: slog with tint for colored console output
-- This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
+- This project uses a CLI ticket system for task management. Run `tk help` when you need to use it. Use `tk ready` and `tk show <id>` to get started. `tk close <id>` when fininished.
 
 ### Project Structure
 ```
