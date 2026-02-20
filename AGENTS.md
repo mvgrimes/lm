@@ -145,16 +145,18 @@
 
 ## Configuration
 
-### Environment Variables (.env)
+### Environment Variables (~/.config/lm/.env)
 ```bash
-OPENAI_API_KEY=your_api_key_here  # Optional, for AI summarization
-DB_PATH=/path/to/database.db       # Optional, defaults to ~/.lm.db
-MODE=development                    # or "production" for JSON logging
+OPENAI_API_KEY=your_api_key_here        # Optional, for AI summarization
+DB_PATH=/path/to/database.db            # Optional, defaults to ~/.config/lm/lm.db
+MODE=development                         # or "production" for JSON logging
 ```
 
-### Database Location
-- Default: `~/.lm.db`
-- Configurable via `DB_PATH` environment variable
+### Config and Database Location
+- Config directory: `~/.config/lm/`
+- Default database: `~/.config/lm/lm.db`
+- Environment file: `~/.config/lm/.env`
+- Both configurable: `DB_PATH` env var overrides the database path
 
 ## Build and Run
 

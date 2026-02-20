@@ -71,19 +71,33 @@ func setupLogging() {
 	}
 }
 
+func configDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(homeDir, ".config", "lm")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 func startTUI() {
-	// Load .env file if it exists
-	_ = godotenv.Load()
+	// Load .env file from config dir if it exists
+	if dir, err := configDir(); err == nil {
+		_ = godotenv.Load(filepath.Join(dir, ".env"))
+	}
 
 	// Get database path from environment or use default
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		homeDir, err := os.UserHomeDir()
+		dir, err := configDir()
 		if err != nil {
-			slog.Error("failed to get home directory", "error", err)
+			slog.Error("failed to get config directory", "error", err)
 			os.Exit(1)
 		}
-		dbPath = filepath.Join(homeDir, ".lm.db")
+		dbPath = filepath.Join(dir, "lm.db")
 	}
 
 	// Get OpenAI API key from environment
