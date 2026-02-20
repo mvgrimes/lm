@@ -37,6 +37,7 @@ type AddLinkModel struct {
 
 	// Processing state
 	isProcessing bool
+	processStage string // e.g. "Fetching...", "Extracting...", "Summarizing..."
 	previewText  string
 	summary      string
 
@@ -90,6 +91,7 @@ func (m AddLinkModel) resetForm() AddLinkModel {
 	m.categoryInput.SetValue("")
 	m.tagsInput.SetValue("")
 	m.isProcessing = false
+	m.processStage = ""
 	m.previewText = ""
 	m.summary = ""
 	m.suggestedCategory = ""
@@ -318,6 +320,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 						url := m.urlInput.Value()
 						if url != "" {
 							m.isProcessing = true
+							m.processStage = "Fetching..."
 							m.previewText = ""
 							m.summary = ""
 							m.suggestedCategory = ""
@@ -326,10 +329,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 							if m.viewportReady {
 								m.contentViewport.SetContent("")
 							}
-							return m, tea.Batch(
-								m.processLink(url, db, fetcher, extractor, summarizer, ctx),
-								notifyCmd("info", "Fetching link..."),
-							)
+							return m, m.fetchLink(url, db, fetcher, ctx)
 						}
 						return m, nil
 					}
@@ -349,15 +349,22 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 				if m.viewportReady {
 					m.contentViewport.SetContent("")
 				}
-				return m, tea.Batch(
-					m.processLink(url, db, fetcher, extractor, summarizer, ctx),
-					notifyCmd("info", "Fetching link..."),
-				)
+				m.processStage = "Fetching..."
+				return m, m.fetchLink(url, db, fetcher, ctx)
 			}
 
 		}
 
+	case linkFetchedMsg:
+		m.processStage = "Extracting..."
+		return m, m.extractLink(msg.url, msg.html, extractor)
+
+	case linkExtractedMsg:
+		m.processStage = "Summarizing..."
+		return m, m.summarizeAndSave(msg.url, msg.title, msg.text, msg.content, msg.preview, db, summarizer, ctx)
+
 	case linkProcessCompleteMsg:
+		m.processStage = ""
 		m.isProcessing = false
 		m.previewText = msg.preview
 		m.summary = msg.summary
@@ -392,6 +399,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 
 	case linkProcessErrorMsg:
 		m.isProcessing = false
+		m.processStage = ""
 		return m, notifyCmd("error", msg.err.Error())
 
 	case metadataSavedMsg:
@@ -561,6 +569,33 @@ func (m AddLinkModel) View() string {
 
 	leftContent += lipgloss.NewStyle().Bold(true).Render(catLabel) + "\n" + m.categoryInput.View() + "\n\n"
 	leftContent += lipgloss.NewStyle().Bold(true).Render(tagLabel) + "\n" + m.tagsInput.View() + "\n\n"
+
+	// Progress indicator
+	if m.processStage != "" {
+		steps := []string{"Fetching...", "Extracting...", "Summarizing..."}
+		currentStep := 0
+		for i, s := range steps {
+			if s == m.processStage {
+				currentStep = i
+			}
+		}
+		progressStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+		dimStyle2 := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+		var progressBar strings.Builder
+		for i, s := range steps {
+			if i < currentStep {
+				progressBar.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("✓ "+s))
+			} else if i == currentStep {
+				progressBar.WriteString(progressStyle.Render("⟳ "+s))
+			} else {
+				progressBar.WriteString(dimStyle2.Render("○ "+s))
+			}
+			if i < len(steps)-1 {
+				progressBar.WriteString("\n")
+			}
+		}
+		leftContent += progressBar.String() + "\n\n"
+	}
 
 	if m.suggestedCategory != "" || len(m.suggestedTags) > 0 {
 		leftContent += suggestionStyle.Render("💡 Suggestions:") + "\n"
@@ -772,6 +807,29 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 	content.WriteString(lipgloss.NewStyle().Bold(true).Render(tagLabel) + "\n")
 	content.WriteString(m.tagsInput.View() + "\n\n")
 
+	// Progress indicator (modal)
+	if m.processStage != "" {
+		steps := []string{"Fetching...", "Extracting...", "Summarizing..."}
+		progressStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+		dimProgress := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+		currentStep := 0
+		for i, s := range steps {
+			if s == m.processStage {
+				currentStep = i
+			}
+		}
+		for i, s := range steps {
+			if i < currentStep {
+				content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("✓ "+s) + "\n")
+			} else if i == currentStep {
+				content.WriteString(progressStyle.Render("⟳ "+s) + "\n")
+			} else {
+				content.WriteString(dimProgress.Render("○ "+s) + "\n")
+			}
+		}
+		content.WriteString("\n")
+	}
+
 	// Summary preview (if available)
 	summaryFocused := m.focusIndex == 3
 	summaryStyle := lipgloss.NewStyle().Bold(true)
@@ -827,41 +885,44 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 	return content.String()
 }
 
-func (m AddLinkModel) processLink(url string, db *database.Database, fetcher *services.Fetcher, extractor *services.Extractor, summarizer *services.Summarizer, ctx context.Context) tea.Cmd {
+// fetchLink is stage 1: check if link exists (return complete) or fetch HTML.
+func (m AddLinkModel) fetchLink(url string, db *database.Database, fetcher *services.Fetcher, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		// Check if link already exists
 		existingLink, err := db.Queries.GetLinkByURL(ctx, url)
 		if err == nil {
-			// Link exists, return it
 			return linkProcessCompleteMsg{
 				linkID:   existingLink.ID,
 				preview:  existingLink.Content.String,
 				summary:  existingLink.Summary.String,
-				category: "", // We don't store category directly on link
+				category: "",
 				tags:     []string{},
 			}
 		}
-
-		// Link doesn't exist, create it
-		// Fetch the URL
 		html, err := fetcher.FetchURL(ctx, url)
 		if err != nil {
 			return linkProcessErrorMsg{err: fmt.Errorf("fetch failed: %w", err)}
 		}
+		return linkFetchedMsg{url: url, html: html}
+	}
+}
 
-		// Extract text
+// extractLink is stage 2: extract text from fetched HTML.
+func (m AddLinkModel) extractLink(url, html string, extractor *services.Extractor) tea.Cmd {
+	return func() tea.Msg {
 		title, text, err := extractor.ExtractText(html)
 		if err != nil {
 			return linkProcessErrorMsg{err: fmt.Errorf("extraction failed: %w", err)}
 		}
-
-		// Use full text as preview (viewport will handle scrolling)
 		preview := text
-
-		// Truncate content for storage
 		content := extractor.TruncateText(text, 10000)
+		return linkExtractedMsg{url: url, title: title, text: text, content: content, preview: preview}
+	}
+}
 
-		// Generate summary and suggestions if OpenAI is configured
+// summarizeAndSave is stage 3: summarize with AI and save to DB.
+func (m AddLinkModel) summarizeAndSave(url, title, text, content, preview string, db *database.Database, summarizer *services.Summarizer, ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
 		var summary string
 		var category string
 		var tags []string
@@ -878,7 +939,6 @@ func (m AddLinkModel) processLink(url string, db *database.Database, fetcher *se
 			tags = []string{}
 		}
 
-		// Save to database
 		link, err := db.Queries.CreateLink(ctx, models.CreateLinkParams{
 			Url:     url,
 			Title:   sql.NullString{String: title, Valid: title != ""},
@@ -886,13 +946,9 @@ func (m AddLinkModel) processLink(url string, db *database.Database, fetcher *se
 			Summary: sql.NullString{String: summary, Valid: summary != ""},
 			Status:  "read_later",
 		})
-
 		if err != nil {
 			return linkProcessErrorMsg{err: fmt.Errorf("save failed: %w", err)}
 		}
-
-		// If this is being added from tasks mode, link it to the task
-		// (This will be handled by the calling code)
 
 		return linkProcessCompleteMsg{
 			linkID:   link.ID,
@@ -905,6 +961,20 @@ func (m AddLinkModel) processLink(url string, db *database.Database, fetcher *se
 }
 
 // Messages
+
+type linkFetchedMsg struct {
+	url  string
+	html string
+}
+
+type linkExtractedMsg struct {
+	url     string
+	title   string
+	text    string
+	content string
+	preview string
+}
+
 type linkProcessCompleteMsg struct {
 	linkID   int64
 	preview  string
