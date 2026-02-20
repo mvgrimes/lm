@@ -213,7 +213,10 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			case "ctrl+r":
 				if !m.refetching && len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					m.refetching = true
-					return m, m.refetchCurrentLink(m.filteredLinks[m.cursor])
+					return m, tea.Batch(
+						m.refetchCurrentLink(m.filteredLinks[m.cursor]),
+						notifyCmd("info", "Refetching..."),
+					)
 				}
 			case "ctrl+a":
 				return m, func() tea.Msg { return openAddLinkModalMsg{} }
@@ -242,7 +245,10 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			case "ctrl+r":
 				if !m.refetching && len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
 					m.refetching = true
-					return m, m.refetchCurrentLink(m.filteredLinks[m.cursor])
+					return m, tea.Batch(
+						m.refetchCurrentLink(m.filteredLinks[m.cursor]),
+						notifyCmd("info", "Refetching..."),
+					)
 				}
 			case "esc":
 				m.focus = panelFocusSearch
@@ -481,10 +487,6 @@ func (m LinksModel) View() string {
 		// URL
 		urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 		titleLine += urlStyle.Render(link.Url) + "\n\n"
-
-		if m.refetching {
-			titleLine += dimStyle.Render("Refetching...") + "\n\n"
-		}
 
 		rightContent = titleLine + m.detailViewport.View()
 
