@@ -266,6 +266,15 @@ Migrations run automatically on startup via embedded files.
 └── .env.example
 ```
 
+## Using the ticket system
+
+Prompt:
+
+    This project uses a CLI ticket manager. Run `tk help`, `tk ready`, `tk show
+    <id>` as needed. Work through the tickets one-by-one. After each is closed
+    (`tk close <id>`), create a git commit using "conventional commit" style
+    commit messages.
+
 ## License
 
 [Your License Here]
