@@ -31,9 +31,8 @@ type TagsModel struct {
 	// Create mode
 	nameInput textinput.Model
 
-	message string
-	width   int
-	height  int
+	width  int
+	height int
 }
 
 func NewTagsModel(db *database.Database) TagsModel {
@@ -75,9 +74,8 @@ func (m TagsModel) Update(msg tea.Msg) (TagsModel, tea.Cmd) {
 
 	case tagCreatedMsg:
 		m.mode = tagsViewMode
-		m.message = "Tag created!"
 		m.nameInput.SetValue("")
-		return m, m.loadTags()
+		return m, tea.Batch(m.loadTags(), notifyCmd("info", "Tag created!"))
 
 	case tagLinksLoadedMsg:
 		m.links = msg.links
@@ -108,7 +106,6 @@ func (m TagsModel) handleViewMode(msg tea.KeyMsg) (TagsModel, tea.Cmd) {
 		// Create new tag
 		m.mode = tagsCreateMode
 		m.nameInput.Focus()
-		m.message = ""
 	case "d":
 		// Delete tag
 		if len(m.tags) > 0 && m.cursor < len(m.tags) {
@@ -149,9 +146,6 @@ func (m TagsModel) View() string {
 }
 
 func (m TagsModel) viewTags() string {
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
-
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("10")).
 		Bold(true)
@@ -161,9 +155,6 @@ func (m TagsModel) viewTags() string {
 
 	var s string
 
-	if m.message != "" {
-		s += messageStyle.Render(m.message) + "\n\n"
-	}
 
 	if len(m.tags) == 0 {
 		s += dimStyle.Render("No tags yet. Press 'n' to create one!\n")

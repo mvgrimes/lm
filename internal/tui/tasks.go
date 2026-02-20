@@ -51,9 +51,8 @@ type TasksModel struct {
 	detailViewport viewport.Model
 	viewportReady  bool
 
-	message string
-	width   int
-	height  int
+	width  int
+	height int
 }
 
 func NewTasksModel(tasks []models.Task, db *database.Database) TasksModel {
@@ -141,15 +140,14 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 		}
 
 	case linkProcessCompleteMsg:
-		// Link was added successfully, link it to the current task
 		if m.mode == tasksAddLinkMode && len(m.tasks) > 0 {
 			taskID := m.tasks[m.cursor].ID
 			linkID := msg.linkID
 			m.mode = tasksViewMode
-			m.message = "Link added to task!"
 			return m, tea.Batch(
 				m.linkToTask(taskID, linkID),
 				m.loadTaskLinks(taskID),
+				notifyCmd("info", "Link added to task!"),
 			)
 		}
 		return m, nil
@@ -169,13 +167,11 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 
 	case taskCreatedMsg:
 		m.mode = tasksViewMode
-		m.message = "Task created!"
 		m.nameInput.SetValue("")
 		m.descInput.SetValue("")
-		return m, m.loadTasks()
+		return m, tea.Batch(m.loadTasks(), notifyCmd("info", "Task created!"))
 
 	case linkAddedToTaskMsg:
-		m.message = "Link associated with task!"
 		return m, nil
 	}
 
@@ -211,13 +207,11 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 		m.createFocus = 0
 		m.nameInput.Focus()
 		m.descInput.Blur()
-		m.message = ""
 	case "a":
 		// Add link to current task
 		if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
 			m.mode = tasksAddLinkMode
-			m.message = ""
-			// Create a new add link model with the task ID
+				// Create a new add link model with the task ID
 			taskID := m.tasks[m.cursor].ID
 			m.addLinkModel = NewAddLinkModelForTask(&taskID)
 			m.addLinkModel.inModal = true
@@ -345,9 +339,6 @@ func (m TasksModel) viewTasks() string {
 	dimStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("243"))
 
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
-
 	// Left panel - task list
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
@@ -357,10 +348,6 @@ func (m TasksModel) viewTasks() string {
 
 	var leftContent strings.Builder
 	leftContent.WriteString(titleStyle.Render("Tasks") + "\n\n")
-
-	if m.message != "" {
-		leftContent.WriteString(messageStyle.Render(m.message) + "\n\n")
-	}
 
 	if len(m.tasks) == 0 {
 		leftContent.WriteString(dimStyle.Render("No tasks yet. Press 'n' to create one!\n"))

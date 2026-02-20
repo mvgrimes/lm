@@ -51,9 +51,8 @@ type ActivitiesModel struct {
 	detailViewport viewport.Model
 	viewportReady  bool
 
-	message string
-	width   int
-	height  int
+	width  int
+	height int
 }
 
 func NewActivitiesModel(db *database.Database) ActivitiesModel {
@@ -140,15 +139,14 @@ func (m ActivitiesModel) Update(msg tea.Msg) (ActivitiesModel, tea.Cmd) {
 		}
 
 	case linkProcessCompleteMsg:
-		// Link was added successfully, link it to the current activity (task)
 		if m.mode == activitiesAddLinkMode && len(m.activities) > 0 {
 			activityID := m.activities[m.cursor].ID
 			linkID := msg.linkID
 			m.mode = activitiesViewMode
-			m.message = "Link added to activity!"
 			return m, tea.Batch(
 				m.linkToActivity(activityID, linkID),
 				m.loadActivityLinks(activityID),
+				notifyCmd("info", "Link added to activity!"),
 			)
 		}
 		return m, nil
@@ -168,10 +166,9 @@ func (m ActivitiesModel) Update(msg tea.Msg) (ActivitiesModel, tea.Cmd) {
 
 	case activityCreatedMsg:
 		m.mode = activitiesViewMode
-		m.message = "Activity created!"
 		m.nameInput.SetValue("")
 		m.descInput.SetValue("")
-		return m, m.loadActivities()
+		return m, tea.Batch(m.loadActivities(), notifyCmd("info", "Activity created!"))
 	}
 
 	return m, nil
@@ -204,13 +201,11 @@ func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cm
 		m.createFocus = 0
 		m.nameInput.Focus()
 		m.descInput.Blur()
-		m.message = ""
 	case "a":
 		// Add link to current activity
 		if len(m.activities) > 0 && m.cursor < len(m.activities) {
 			m.mode = activitiesAddLinkMode
-			m.message = ""
-			m.addLinkModel = NewAddLinkModel()
+				m.addLinkModel = NewAddLinkModel()
 			return m, func() tea.Msg {
 				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
 			}
@@ -327,8 +322,6 @@ func (m ActivitiesModel) viewActivities() string {
 	dimStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("243"))
 
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
 
 	// Left panel - activities list
 	leftPanelStyle := lipgloss.NewStyle().
@@ -340,9 +333,6 @@ func (m ActivitiesModel) viewActivities() string {
 	var leftContent strings.Builder
 	leftContent.WriteString(titleStyle.Render("Activities") + "\n\n")
 
-	if m.message != "" {
-		leftContent.WriteString(messageStyle.Render(m.message) + "\n\n")
-	}
 
 	if len(m.activities) == 0 {
 		leftContent.WriteString(dimStyle.Render("No activities yet. Press 'n' to create one!\n"))

@@ -25,11 +25,6 @@ type EditLinkModel struct {
 
 	// Processing state
 	isProcessing bool
-	statusText   string
-
-	// Results
-	message string
-	success bool
 
 	width  int
 	height int
@@ -149,68 +144,43 @@ func (m EditLinkModel) Update(msg tea.Msg) (EditLinkModel, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+s":
-			// Save changes
 			if !m.isProcessing {
 				m.isProcessing = true
-				m.statusText = "Saving..."
-				m.message = ""
-				m.success = false
-				return m, m.saveChanges()
+				return m, tea.Batch(m.saveChanges(), notifyCmd("info", "Saving..."))
 			}
 
 		case "ctrl+r":
-			// Reload content
 			if !m.isProcessing {
 				m.isProcessing = true
-				m.statusText = "Reloading content..."
-				m.message = ""
-				m.success = false
-				return m, m.reloadContent()
+				return m, tea.Batch(m.reloadContent(), notifyCmd("info", "Reloading content..."))
 			}
 		case "enter":
-			// Activate Save/Reload buttons when focused
 			if !m.isProcessing {
 				if m.focusIndex == 3 {
 					m.isProcessing = true
-					m.statusText = "Saving..."
-					m.message = ""
-					m.success = false
-					return m, m.saveChanges()
+					return m, tea.Batch(m.saveChanges(), notifyCmd("info", "Saving..."))
 				}
 				if m.focusIndex == 4 {
 					m.isProcessing = true
-					m.statusText = "Reloading content..."
-					m.message = ""
-					m.success = false
-					return m, m.reloadContent()
+					return m, tea.Batch(m.reloadContent(), notifyCmd("info", "Reloading content..."))
 				}
 			}
 		}
 
 	case editLinkCompleteMsg:
 		m.isProcessing = false
-		m.statusText = "Complete!"
-		m.message = "Link updated successfully!"
-		m.success = true
-		return m, nil
+		return m, notifyCmd("info", "Link updated!")
 
 	case editLinkErrorMsg:
 		m.isProcessing = false
-		m.statusText = ""
-		m.message = "Error: " + msg.err.Error()
-		m.success = false
-		return m, nil
+		return m, notifyCmd("error", msg.err.Error())
 
 	case reloadContentCompleteMsg:
 		m.isProcessing = false
-		m.statusText = ""
-		m.message = "Content reloaded successfully!"
-		m.success = true
-		// Update the summary field with the new content
 		if msg.summary != "" {
 			m.summaryInput.SetValue(msg.summary)
 		}
-		return m, nil
+		return m, notifyCmd("info", "Content reloaded!")
 	}
 
 	// Update the focused input
@@ -231,16 +201,6 @@ func (m EditLinkModel) View() string {
 		Bold(true).
 		Foreground(lipgloss.Color("6"))
 
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
-
-	errorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("9"))
-
-	progressStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("12")).
-		Bold(true)
-
 	dimStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("243"))
 
@@ -255,20 +215,6 @@ func (m EditLinkModel) View() string {
 
 	// URL
 	content.WriteString(dimStyle.Render("URL: "+m.link.Url) + "\n\n")
-
-	// Status
-	if m.statusText != "" {
-		content.WriteString(progressStyle.Render("⏳ "+m.statusText) + "\n\n")
-	}
-
-	// Message
-	if m.message != "" {
-		if m.success {
-			content.WriteString(messageStyle.Render("✓ "+m.message) + "\n\n")
-		} else {
-			content.WriteString(errorStyle.Render("✗ "+m.message) + "\n\n")
-		}
-	}
 
 	// Inputs
 	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))

@@ -34,9 +34,8 @@ type CategoriesModel struct {
 	descInput   textinput.Model
 	createFocus int
 
-	message string
-	width   int
-	height  int
+	width  int
+	height int
 }
 
 func NewCategoriesModel(db *database.Database) CategoriesModel {
@@ -84,10 +83,9 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 
 	case categoryCreatedMsg:
 		m.mode = categoriesViewMode
-		m.message = "Category created!"
 		m.nameInput.SetValue("")
 		m.descInput.SetValue("")
-		return m, m.loadCategories()
+		return m, tea.Batch(m.loadCategories(), notifyCmd("info", "Category created!"))
 
 	case categoryLinksLoadedMsg:
 		m.links = msg.links
@@ -120,7 +118,6 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 		m.createFocus = 0
 		m.nameInput.Focus()
 		m.descInput.Blur()
-		m.message = ""
 	case "d":
 		// Delete category
 		if len(m.categories) > 0 && m.cursor < len(m.categories) {
@@ -178,9 +175,6 @@ func (m CategoriesModel) View() string {
 }
 
 func (m CategoriesModel) viewCategories() string {
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
-
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("10")).
 		Bold(true)
@@ -189,10 +183,6 @@ func (m CategoriesModel) viewCategories() string {
 		Foreground(lipgloss.Color("243"))
 
 	var s string
-
-	if m.message != "" {
-		s += messageStyle.Render(m.message) + "\n\n"
-	}
 
 	if len(m.categories) == 0 {
 		s += dimStyle.Render("No categories yet. Press 'n' to create one!\n")

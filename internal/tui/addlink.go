@@ -37,17 +37,12 @@ type AddLinkModel struct {
 
 	// Processing state
 	isProcessing bool
-	statusText   string
 	previewText  string
 	summary      string
 
 	// Suggested values
 	suggestedCategory string
 	suggestedTags     []string
-
-	// Results
-	message string
-	success bool
 
 	width  int
 	height int
@@ -95,13 +90,14 @@ func (m AddLinkModel) resetForm() AddLinkModel {
 	m.categoryInput.SetValue("")
 	m.tagsInput.SetValue("")
 	m.isProcessing = false
-	m.statusText = ""
 	m.previewText = ""
 	m.summary = ""
-	m.message = ""
-	m.success = false
 	m.suggestedCategory = ""
 	m.suggestedTags = nil
+	m.linkID = nil
+	m.savedCategory = ""
+	m.savedTags = nil
+	m.pendingSave = false
 	m.focusIndex = 0
 	m.urlInput.Focus()
 	m.categoryInput.Blur()
@@ -142,14 +138,10 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			borderOverhead    = 4 // Each box has 2 lines of border (top+bottom)
 			summaryTitleLines = 3 // "Summary" title + spacing
 			contentTitleLines = 3 // "Page Content" title + spacing
-			statusLines       = 2 // Status text when present
 		)
 
 		// Start with total height minus fixed overhead
 		availableHeight := m.height - helpTextLines - spacingLines
-		if m.statusText != "" {
-			availableHeight -= statusLines
-		}
 
 		// Summary gets fixed 6 lines of viewport space
 		const summaryViewportLines = 6
@@ -326,9 +318,6 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 						url := m.urlInput.Value()
 						if url != "" {
 							m.isProcessing = true
-							m.statusText = "Fetching URL..."
-							m.message = ""
-							m.success = false
 							m.previewText = ""
 							m.summary = ""
 							m.suggestedCategory = ""
@@ -337,7 +326,10 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 							if m.viewportReady {
 								m.contentViewport.SetContent("")
 							}
-							return m, m.processLink(url, db, fetcher, extractor, summarizer, ctx)
+							return m, tea.Batch(
+								m.processLink(url, db, fetcher, extractor, summarizer, ctx),
+								notifyCmd("info", "Fetching link..."),
+							)
 						}
 						return m, nil
 					}
@@ -354,9 +346,6 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			url := m.urlInput.Value()
 			if url != "" && !m.isProcessing {
 				m.isProcessing = true
-				m.statusText = "Fetching URL..."
-				m.message = ""
-				m.success = false
 				m.previewText = ""
 				m.summary = ""
 				m.suggestedCategory = ""
@@ -364,16 +353,16 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 				if m.viewportReady {
 					m.contentViewport.SetContent("")
 				}
-				return m, m.processLink(url, db, fetcher, extractor, summarizer, ctx)
+				return m, tea.Batch(
+					m.processLink(url, db, fetcher, extractor, summarizer, ctx),
+					notifyCmd("info", "Fetching link..."),
+				)
 			}
 
 		}
 
 	case linkProcessCompleteMsg:
 		m.isProcessing = false
-		m.statusText = "Complete!"
-		m.message = "Link fetched!"
-		m.success = true
 		m.previewText = msg.preview
 		m.summary = msg.summary
 		m.suggestedCategory = msg.category
@@ -401,21 +390,15 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 
 		if m.pendingSave {
 			m.pendingSave = false
-			return m, m.saveMetadata(db)
+			return m, tea.Batch(m.saveMetadata(db), notifyCmd("info", "Link saved!"))
 		}
-		return m, nil
+		return m, notifyCmd("info", "Link fetched!")
 
 	case linkProcessErrorMsg:
 		m.isProcessing = false
-		m.message = "Error: " + msg.err.Error()
-		m.success = false
-		m.statusText = ""
-		return m, nil
+		return m, notifyCmd("error", msg.err.Error())
 
 	case metadataSavedMsg:
-		m.statusText = "Saved!"
-		m.message = "Link metadata saved."
-		m.success = true
 		// update saved state for highlighting
 		m.savedCategory = strings.TrimSpace(m.categoryInput.Value())
 		curTags := []string{}
@@ -428,7 +411,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			}
 		}
 		m.savedTags = curTags
-		return m, nil
+		return m, notifyCmd("info", "Metadata saved.")
 	}
 
 	// Update the focused input
@@ -480,24 +463,10 @@ func (m AddLinkModel) View() string {
 		warningStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("9"))
 
-		messageStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("10"))
-
-		errorStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("9"))
-
 		content := titleStyle.Render("Add Link") + "\n\n"
 		content += m.urlInput.View() + "\n\n"
 		content += m.categoryInput.View() + "\n\n"
 		content += m.tagsInput.View() + "\n\n"
-
-		if m.message != "" {
-			if m.success {
-				content += messageStyle.Render(m.message) + "\n\n"
-			} else {
-				content += errorStyle.Render(m.message) + "\n\n"
-			}
-		}
 
 		content += warningStyle.Render(fmt.Sprintf(
 			"⚠ Terminal too narrow (width: %d, need: %d)\n"+
@@ -540,19 +509,9 @@ func (m AddLinkModel) View() string {
 		BorderForeground(lipgloss.Color("12")).
 		Padding(1)
 
-	progressStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("12")).
-		Bold(true)
-
 	suggestionStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("11")).
 		Italic(true)
-
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
-
-	errorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("9"))
 
 	// Left panel - inputs
 	leftContent := titleStyle.Render("Add Link")
@@ -614,21 +573,8 @@ func (m AddLinkModel) View() string {
 		leftContent += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("Press Ctrl+L to accept") + "\n"
 	}
 
-	if m.message != "" {
-		if m.success {
-			leftContent += "\n" + messageStyle.Render(m.message)
-		} else {
-			leftContent += "\n" + errorStyle.Render(m.message)
-		}
-	}
-
 	// Right panel - summary and content boxes
 	var rightContent string
-
-	// Status
-	if m.statusText != "" {
-		rightContent += progressStyle.Render("Status: "+m.statusText) + "\n\n"
-	}
 
 	// Summary box with viewport
 	summaryBoxContent := ""
@@ -772,16 +718,6 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 		Bold(true).
 		Foreground(lipgloss.Color("6"))
 
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10"))
-
-	errorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("9"))
-
-	progressStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("12")).
-		Bold(true)
-
 	dimStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("243"))
 
@@ -792,20 +728,6 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 		content.WriteString(titleStyle.Render("Add Link to Task") + "\n\n")
 	} else {
 		content.WriteString(titleStyle.Render("Add Link") + "\n\n")
-	}
-
-	// Status
-	if m.statusText != "" {
-		content.WriteString(progressStyle.Render("⏳ "+m.statusText) + "\n\n")
-	}
-
-	// Message
-	if m.message != "" {
-		if m.success {
-			content.WriteString(messageStyle.Render("✓ "+m.message) + "\n\n")
-		} else {
-			content.WriteString(errorStyle.Render("✗ "+m.message) + "\n\n")
-		}
 	}
 
 	// Inputs with unsaved highlighting
