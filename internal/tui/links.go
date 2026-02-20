@@ -221,12 +221,20 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			return m, nil
 
 		case linksFocusDetail:
-			// Detail-focused: PgUp/PgDn scroll the viewport, Esc goes back.
+			// Detail-focused: scroll the viewport, Esc goes back.
 			switch msg.String() {
 			case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 				if m.viewportReady {
 					m.detailViewport, cmd = m.detailViewport.Update(msg)
 					return m, cmd
+				}
+			case "up", "k":
+				if m.viewportReady {
+					m.detailViewport.ScrollUp(1)
+				}
+			case "down", "j":
+				if m.viewportReady {
+					m.detailViewport.ScrollDown(1)
 				}
 			case "esc":
 				m.focus = linksFocusSearch
@@ -336,9 +344,13 @@ func (m LinksModel) View() string {
 		Bold(true).
 		Foreground(lipgloss.Color("6"))
 
+	searchBorderColor := lipgloss.Color("10")
+	if m.focus != linksFocusSearch {
+		searchBorderColor = lipgloss.Color("8")
+	}
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("10")).
+		BorderForeground(searchBorderColor).
 		Padding(0, 1).
 		Width(leftWidth - 4)
 
@@ -480,7 +492,7 @@ func (m LinksModel) View() string {
 	case linksFocusList:
 		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter: open • s: sort • Esc: back to search"
 	case linksFocusDetail:
-		helpMsg = "Tab: focus search • PgUp/PgDn: scroll • Esc: back to search"
+		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
 	default:
 		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • Enter: open • Esc: clear search"
 	}
