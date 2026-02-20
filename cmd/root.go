@@ -84,35 +84,41 @@ func configDir() (string, error) {
 }
 
 func startTUI() {
-	// Load .env file from config dir if it exists
 	if dir, err := configDir(); err == nil {
-		_ = godotenv.Load(filepath.Join(dir, ".env"))
+		_ = loadEnvFile(dir)
 	}
 
-	// Get database path from environment or use default
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dir, err := configDir()
-		if err != nil {
-			slog.Error("failed to get config directory", "error", err)
-			os.Exit(1)
-		}
-		dbPath = filepath.Join(dir, "lm.db")
-	}
-
-	// Get OpenAI API key from environment
-	apiKey := os.Getenv("OPENAI_API_KEY")
-
-	// Initialize database
-	db := database.New(dbPath)
+	db := database.New(dbPathFromEnv())
 	defer db.Close()
 
-	// Create and run TUI
-	model := tui.NewModel(db, apiKey)
+	model := tui.NewModel(db, apiKeyFromEnv())
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		slog.Error("TUI error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// loadEnvFile loads the .env file from the given config directory.
+func loadEnvFile(dir string) error {
+	return godotenv.Load(filepath.Join(dir, ".env"))
+}
+
+// dbPathFromEnv returns the database path from the DB_PATH env var or the default location.
+func dbPathFromEnv() string {
+	if path := os.Getenv("DB_PATH"); path != "" {
+		return path
+	}
+	dir, err := configDir()
+	if err != nil {
+		slog.Error("failed to get config directory", "error", err)
+		os.Exit(1)
+	}
+	return filepath.Join(dir, "lm.db")
+}
+
+// apiKeyFromEnv returns the OpenAI API key from the environment.
+func apiKeyFromEnv() string {
+	return os.Getenv("OPENAI_API_KEY")
 }
