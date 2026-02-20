@@ -220,6 +220,7 @@ func (m TasksModel) handleViewMode(msg tea.KeyMsg) (TasksModel, tea.Cmd) {
 			// Create a new add link model with the task ID
 			taskID := m.tasks[m.cursor].ID
 			m.addLinkModel = NewAddLinkModelForTask(&taskID)
+			m.addLinkModel.inModal = true
 			// Send window size to initialize viewport
 			return m, func() tea.Msg {
 				return tea.WindowSizeMsg{Width: m.width, Height: m.height}

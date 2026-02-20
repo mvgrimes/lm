@@ -20,7 +20,14 @@ type AddLinkModel struct {
 	urlInput      textinput.Model
 	categoryInput textinput.Model
 	tagsInput     textinput.Model
-	focusIndex    int // 0=url, 1=category, 2=tags, 3=summary viewport, 4=content viewport
+	focusIndex    int  // 0=url, 1=category, 2=tags, 3=summary viewport, 4=content viewport, 5=Save(btn), 6=Cancel(btn), 7=Close(btn)
+	inModal       bool // whether rendered in modal
+
+	// Save/unsaved state
+	linkID        *int64
+	savedCategory string
+	savedTags     []string
+	pendingSave   bool
 
 	// Viewports for scrolling
 	contentViewport viewport.Model
@@ -81,6 +88,33 @@ func NewAddLinkModelForTask(taskID *int64) AddLinkModel {
 
 func (m AddLinkModel) Init() tea.Cmd {
 	return nil
+}
+
+func (m AddLinkModel) resetForm() AddLinkModel {
+	m.urlInput.SetValue("")
+	m.categoryInput.SetValue("")
+	m.tagsInput.SetValue("")
+	m.isProcessing = false
+	m.statusText = ""
+	m.previewText = ""
+	m.summary = ""
+	m.message = ""
+	m.success = false
+	m.suggestedCategory = ""
+	m.suggestedTags = nil
+	m.focusIndex = 0
+	m.urlInput.Focus()
+	m.categoryInput.Blur()
+	m.tagsInput.Blur()
+	if m.viewportReady {
+		m.contentViewport.SetContent("")
+		m.contentViewport.GotoTop()
+	}
+	if m.summaryReady {
+		m.summaryViewport.SetContent("")
+		m.summaryViewport.GotoTop()
+	}
+	return m
 }
 
 func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *services.Fetcher, extractor *services.Extractor, summarizer *services.Summarizer, ctx context.Context) (AddLinkModel, tea.Cmd) {
@@ -157,9 +191,13 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 
 		switch msg.String() {
 		case "tab":
-			// Cycle through inputs only (0-2)
+			// Cycle focus; in modal include buttons
 			m.focusIndex++
-			if m.focusIndex > 2 {
+			maxIdx := 2
+			if m.inModal {
+				maxIdx = 7
+			}
+			if m.focusIndex > maxIdx {
 				m.focusIndex = 0
 			}
 
@@ -179,10 +217,15 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			return m, nil
 
 		case "shift+tab":
-			// Cycle through inputs backward (0-2)
+			// Cycle backward; in modal include buttons
 			m.focusIndex--
-			if m.focusIndex < 0 {
-				m.focusIndex = 2
+			minIdx := 0
+			maxIdx := 2
+			if m.inModal {
+				maxIdx = 7
+			}
+			if m.focusIndex < minIdx {
+				m.focusIndex = maxIdx
 			}
 
 			m.urlInput.Blur()
@@ -249,6 +292,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			return m, nil
 
 		case "pgup", "pgdown":
+
 			// Scroll the focused viewport
 			if m.focusIndex == 3 && m.summaryReady {
 				// Scroll summary
@@ -275,6 +319,38 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 			return m, nil
 
 		case "enter":
+			// Activate buttons if focused in modal
+			if m.inModal && !m.isProcessing {
+				if m.focusIndex == 5 { // Save button
+					if m.linkID == nil {
+						url := m.urlInput.Value()
+						if url != "" {
+							m.isProcessing = true
+							m.statusText = "Fetching URL..."
+							m.message = ""
+							m.success = false
+							m.previewText = ""
+							m.summary = ""
+							m.suggestedCategory = ""
+							m.suggestedTags = nil
+							m.pendingSave = true
+							if m.viewportReady {
+								m.contentViewport.SetContent("")
+							}
+							return m, m.processLink(url, db, fetcher, extractor, summarizer, ctx)
+						}
+						return m, nil
+					}
+					return m, m.saveMetadata(db)
+				}
+				if m.focusIndex == 6 { // Cancel button
+					m = m.resetForm()
+					return m, nil
+				}
+				if m.focusIndex == 7 { // Close button
+					return m, func() tea.Msg { return addLinkCloseRequestedMsg{} }
+				}
+			}
 			url := m.urlInput.Value()
 			if url != "" && !m.isProcessing {
 				m.isProcessing = true
@@ -291,43 +367,18 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 				return m, m.processLink(url, db, fetcher, extractor, summarizer, ctx)
 			}
 
-		case "ctrl+r":
-			// Reset form
-			m.urlInput.SetValue("")
-			m.categoryInput.SetValue("")
-			m.tagsInput.SetValue("")
-			m.isProcessing = false
-			m.statusText = ""
-			m.previewText = ""
-			m.summary = ""
-			m.message = ""
-			m.success = false
-			m.suggestedCategory = ""
-			m.suggestedTags = nil
-			m.focusIndex = 0
-			m.urlInput.Focus()
-			m.categoryInput.Blur()
-			m.tagsInput.Blur()
-			if m.viewportReady {
-				m.contentViewport.SetContent("")
-				m.contentViewport.GotoTop()
-			}
-			if m.summaryReady {
-				m.summaryViewport.SetContent("")
-				m.summaryViewport.GotoTop()
-			}
-			return m, nil
 		}
 
 	case linkProcessCompleteMsg:
 		m.isProcessing = false
 		m.statusText = "Complete!"
-		m.message = "Link added successfully!"
+		m.message = "Link fetched!"
 		m.success = true
 		m.previewText = msg.preview
 		m.summary = msg.summary
 		m.suggestedCategory = msg.category
 		m.suggestedTags = msg.tags
+		m.linkID = &msg.linkID
 
 		// Update viewport contents
 		if m.viewportReady {
@@ -347,6 +398,11 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 		if m.tagsInput.Value() == "" && len(msg.tags) > 0 {
 			m.tagsInput.SetValue(strings.Join(msg.tags, ", "))
 		}
+
+		if m.pendingSave {
+			m.pendingSave = false
+			return m, m.saveMetadata(db)
+		}
 		return m, nil
 
 	case linkProcessErrorMsg:
@@ -354,6 +410,24 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 		m.message = "Error: " + msg.err.Error()
 		m.success = false
 		m.statusText = ""
+		return m, nil
+
+	case metadataSavedMsg:
+		m.statusText = "Saved!"
+		m.message = "Link metadata saved."
+		m.success = true
+		// update saved state for highlighting
+		m.savedCategory = strings.TrimSpace(m.categoryInput.Value())
+		curTags := []string{}
+		if strings.TrimSpace(m.tagsInput.Value()) != "" {
+			for _, s := range strings.Split(m.tagsInput.Value(), ",") {
+				t := strings.ToLower(strings.TrimSpace(s))
+				if t != "" {
+					curTags = append(curTags, t)
+				}
+			}
+		}
+		m.savedTags = curTags
 		return m, nil
 	}
 
@@ -487,8 +561,47 @@ func (m AddLinkModel) View() string {
 	}
 	leftContent += "\n\n"
 	leftContent += m.urlInput.View() + "\n\n"
-	leftContent += m.categoryInput.View() + "\n\n"
-	leftContent += m.tagsInput.View() + "\n\n"
+	// Highlight unsaved fields
+	unsavedCat := m.linkID != nil && strings.TrimSpace(m.categoryInput.Value()) != strings.TrimSpace(m.savedCategory)
+	unsavedTags := false
+	if m.linkID != nil {
+		curTags := []string{}
+		if strings.TrimSpace(m.tagsInput.Value()) != "" {
+			for _, s := range strings.Split(m.tagsInput.Value(), ",") {
+				t := strings.ToLower(strings.TrimSpace(s))
+				if t != "" {
+					curTags = append(curTags, t)
+				}
+			}
+		}
+		// simple set compare
+		if len(curTags) != len(m.savedTags) {
+			unsavedTags = true
+		} else {
+			mset := map[string]struct{}{}
+			for _, t := range m.savedTags {
+				mset[t] = struct{}{}
+			}
+			for _, t := range curTags {
+				if _, ok := mset[t]; !ok {
+					unsavedTags = true
+					break
+				}
+			}
+		}
+	}
+
+	catLabel := "Category:"
+	if unsavedCat {
+		catLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Category (unsaved):")
+	}
+	tagLabel := "Tags:"
+	if unsavedTags {
+		tagLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Tags (unsaved):")
+	}
+
+	leftContent += lipgloss.NewStyle().Bold(true).Render(catLabel) + "\n" + m.categoryInput.View() + "\n\n"
+	leftContent += lipgloss.NewStyle().Bold(true).Render(tagLabel) + "\n" + m.tagsInput.View() + "\n\n"
 
 	if m.suggestedCategory != "" || len(m.suggestedTags) > 0 {
 		leftContent += suggestionStyle.Render("💡 Suggestions:") + "\n"
@@ -608,6 +721,52 @@ func (m AddLinkModel) View() string {
 }
 
 // ViewModal renders a compact version of the add link form suitable for modal display
+func (m AddLinkModel) saveMetadata(db *database.Database) tea.Cmd {
+	linkID := m.linkID
+	category := strings.TrimSpace(m.categoryInput.Value())
+	tagStr := m.tagsInput.Value()
+	return func() tea.Msg {
+		if linkID == nil {
+			return linkProcessErrorMsg{err: fmt.Errorf("no link to save")}
+		}
+		// Save category if provided
+		if category != "" {
+			cat, err := db.Queries.GetCategoryByName(context.Background(), category)
+			if err != nil {
+				// create if not exists
+				cat, err = db.Queries.CreateCategory(context.Background(), models.CreateCategoryParams{
+					Name:        category,
+					Description: sql.NullString{Valid: false},
+				})
+				if err != nil {
+					return linkProcessErrorMsg{err: fmt.Errorf("category save failed: %w", err)}
+				}
+			}
+			// Link category
+			_ = db.Queries.LinkCategory(context.Background(), models.LinkCategoryParams{LinkID: *linkID, CategoryID: cat.ID})
+		}
+		// Save tags
+		if strings.TrimSpace(tagStr) != "" {
+			tags := strings.Split(tagStr, ",")
+			for i := range tags {
+				tags[i] = strings.ToLower(strings.TrimSpace(tags[i]))
+				if tags[i] == "" {
+					continue
+				}
+				t, err := db.Queries.GetTagByName(context.Background(), tags[i])
+				if err != nil {
+					t, err = db.Queries.CreateTag(context.Background(), tags[i])
+					if err != nil {
+						return linkProcessErrorMsg{err: fmt.Errorf("tag save failed: %w", err)}
+					}
+				}
+				_ = db.Queries.LinkTag(context.Background(), models.LinkTagParams{LinkID: *linkID, TagID: t.ID})
+			}
+		}
+		return metadataSavedMsg{}
+	}
+}
+
 func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -649,9 +808,46 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 		}
 	}
 
-	// Inputs
+	// Inputs with unsaved highlighting
 	content.WriteString(m.urlInput.View() + "\n\n")
+	unsavedCat := m.linkID != nil && strings.TrimSpace(m.categoryInput.Value()) != strings.TrimSpace(m.savedCategory)
+	unsavedTags := false
+	if m.linkID != nil {
+		curTags := []string{}
+		if strings.TrimSpace(m.tagsInput.Value()) != "" {
+			for _, s := range strings.Split(m.tagsInput.Value(), ",") {
+				t := strings.ToLower(strings.TrimSpace(s))
+				if t != "" {
+					curTags = append(curTags, t)
+				}
+			}
+		}
+		if len(curTags) != len(m.savedTags) {
+			unsavedTags = true
+		} else {
+			mset := map[string]struct{}{}
+			for _, t := range m.savedTags {
+				mset[t] = struct{}{}
+			}
+			for _, t := range curTags {
+				if _, ok := mset[t]; !ok {
+					unsavedTags = true
+					break
+				}
+			}
+		}
+	}
+	catLabel := "Category:"
+	if unsavedCat {
+		catLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Category (unsaved):")
+	}
+	tagLabel := "Tags:"
+	if unsavedTags {
+		tagLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Tags (unsaved):")
+	}
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render(catLabel) + "\n")
 	content.WriteString(m.categoryInput.View() + "\n\n")
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render(tagLabel) + "\n")
 	content.WriteString(m.tagsInput.View() + "\n\n")
 
 	// Summary preview (if available)
@@ -664,8 +860,34 @@ func (m AddLinkModel) ViewModal(maxWidth, maxHeight int) string {
 		content.WriteString(dimStyle.Render(summaryPreview) + "\n\n")
 	}
 
+	// Buttons row (Save, Cancel, Close)
+	btnBase := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("8")).
+		Padding(0, 1)
+
+	saveStyle := btnBase
+	if m.focusIndex == 5 {
+		saveStyle = saveStyle.Bold(true).Foreground(lipgloss.Color("10")).BorderForeground(lipgloss.Color("10"))
+	}
+	saveBtn := saveStyle.Render(" Save ")
+
+	cancelStyle := btnBase
+	if m.focusIndex == 6 {
+		cancelStyle = cancelStyle.Bold(true).Foreground(lipgloss.Color("11")).BorderForeground(lipgloss.Color("11"))
+	}
+	cancelBtn := cancelStyle.Render(" Cancel ")
+
+	closeStyle := btnBase
+	if m.focusIndex == 7 {
+		closeStyle = closeStyle.Bold(true).Foreground(lipgloss.Color("9")).BorderForeground(lipgloss.Color("9"))
+	}
+	closeBtn := closeStyle.Render(" Close ")
+
+	content.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, saveBtn, "  ", cancelBtn, "  ", closeBtn) + "\n\n")
+
 	// Help text
-	content.WriteString(dimStyle.Render("Tab: cycle • Enter: submit • Ctrl+R: reset • Esc: close"))
+	content.WriteString(dimStyle.Render("Tab: cycle • Enter: submit/save/click • Esc: close"))
 
 	return content.String()
 }
@@ -759,3 +981,7 @@ type linkProcessCompleteMsg struct {
 type linkProcessErrorMsg struct {
 	err error
 }
+
+type addLinkCloseRequestedMsg struct{}
+
+type metadataSavedMsg struct{}

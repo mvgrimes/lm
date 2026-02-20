@@ -100,6 +100,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addLinkModel = NewAddLinkModel()
 			m.addLinkModel.width = m.width
 			m.addLinkModel.height = m.height
+			m.addLinkModel.inModal = true
 			return m, func() tea.Msg {
 				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
 			}
@@ -185,6 +186,10 @@ func (m Model) updateAddLinkModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+
+	case addLinkCloseRequestedMsg:
+		m.showAddLinkModal = false
+		return m, nil
 
 	case linkProcessCompleteMsg:
 		// Keep modal open to show success state, but refresh data in background
