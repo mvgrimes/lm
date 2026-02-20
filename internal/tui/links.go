@@ -17,16 +17,6 @@ import (
 	"mccwk.com/lm/internal/services"
 )
 
-// linksFocusArea tracks which UI element has keyboard focus in the Links tab.
-// 0=search, 1=list, 2=detail panel
-type linksFocusArea int
-
-const (
-	linksFocusSearch linksFocusArea = iota
-	linksFocusList
-	linksFocusDetail
-)
-
 // linksSortMode controls the order of the links list.
 type linksSortMode int
 
@@ -59,7 +49,7 @@ type LinksModel struct {
 
 	// Search and sort
 	searchInput textinput.Model
-	focus       linksFocusArea
+	focus       panelFocus
 	sortMode    linksSortMode
 
 	// Detail view
@@ -90,7 +80,7 @@ func NewLinksModel(db *database.Database) LinksModel {
 		db:          db,
 		ctx:         context.Background(),
 		searchInput: searchInput,
-		focus:       linksFocusSearch,
+		focus:       panelFocusSearch,
 	}
 }
 
@@ -159,7 +149,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 		switch msg.String() {
 		case "tab":
 			m.focus = (m.focus + 1) % 3
-			if m.focus == linksFocusSearch {
+			if m.focus == panelFocusSearch {
 				m.searchInput.Focus()
 			} else {
 				m.searchInput.Blur()
@@ -167,7 +157,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			return m, nil
 		case "shift+tab":
 			m.focus = (m.focus + 2) % 3 // -1 mod 3
-			if m.focus == linksFocusSearch {
+			if m.focus == panelFocusSearch {
 				m.searchInput.Focus()
 			} else {
 				m.searchInput.Blur()
@@ -176,7 +166,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 		case "s":
 			// Only cycle sort when focus is NOT on the search input
 			// (so typing 's' in search still filters).
-			if m.focus != linksFocusSearch {
+			if m.focus != panelFocusSearch {
 				m.sortMode = (m.sortMode + 1) % 4
 				m.filterLinks()
 				m.updateDetailView()
@@ -185,7 +175,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 		}
 
 		switch m.focus {
-		case linksFocusList:
+		case panelFocusList:
 			// List-focused: navigate with arrows/j/k, open with Enter, back to search with Esc.
 			switch msg.String() {
 			case "up", "k":
@@ -215,12 +205,12 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 					return m, m.openLink(m.filteredLinks[m.cursor].Url)
 				}
 			case "esc":
-				m.focus = linksFocusSearch
+				m.focus = panelFocusSearch
 				m.searchInput.Focus()
 			}
 			return m, nil
 
-		case linksFocusDetail:
+		case panelFocusDetail:
 			// Detail-focused: scroll the viewport, Esc goes back.
 			switch msg.String() {
 			case "pgup", "pgdown", "ctrl+u", "ctrl+d":
@@ -237,12 +227,12 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 					m.detailViewport.ScrollDown(1)
 				}
 			case "esc":
-				m.focus = linksFocusSearch
+				m.focus = panelFocusSearch
 				m.searchInput.Focus()
 			}
 			return m, nil
 
-		default: // linksFocusSearch
+		default: // panelFocusSearch
 			// Up/Down always navigate the list even from search focus for convenience.
 			switch msg.String() {
 			case "up":
@@ -345,7 +335,7 @@ func (m LinksModel) View() string {
 		Foreground(lipgloss.Color("6"))
 
 	searchBorderColor := lipgloss.Color("10")
-	if m.focus != linksFocusSearch {
+	if m.focus != panelFocusSearch {
 		searchBorderColor = lipgloss.Color("8")
 	}
 	searchBoxStyle := lipgloss.NewStyle().
@@ -358,7 +348,7 @@ func (m LinksModel) View() string {
 
 	// Left panel — link list; highlight border when list is focused.
 	leftBorderColor := lipgloss.Color("8")
-	if m.focus == linksFocusList {
+	if m.focus == panelFocusList {
 		leftBorderColor = lipgloss.Color("10")
 	}
 	leftPanelStyle := lipgloss.NewStyle().
@@ -446,7 +436,7 @@ func (m LinksModel) View() string {
 
 	// Right panel — detail view; highlight border when detail panel is focused.
 	rightBorderColor := lipgloss.Color("12")
-	if m.focus == linksFocusDetail {
+	if m.focus == panelFocusDetail {
 		rightBorderColor = lipgloss.Color("10")
 	}
 	rightPanelStyle := lipgloss.NewStyle().
@@ -489,9 +479,9 @@ func (m LinksModel) View() string {
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	var helpMsg string
 	switch m.focus {
-	case linksFocusList:
+	case panelFocusList:
 		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter: open • s: sort • Esc: back to search"
-	case linksFocusDetail:
+	case panelFocusDetail:
 		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
 	default:
 		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • Enter: open • Esc: clear search"

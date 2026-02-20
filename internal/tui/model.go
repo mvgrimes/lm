@@ -103,6 +103,7 @@ func NewModel(db *database.Database, apiKey string) Model {
 		summarizer:      summarizer,
 		linksModel:      linksModel,
 		activitiesModel: activitiesModel,
+		readLaterModel:  NewReadLaterModel(db),
 		tagsModel:       NewTagsModel(db),
 		categoriesModel: NewCategoriesModel(db),
 		alert:           alert,
@@ -112,6 +113,7 @@ func NewModel(db *database.Database, apiKey string) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.linksModel.Init(),
+		m.readLaterModel.Init(),
 		m.tagsModel.Init(),
 		m.categoriesModel.Init(),
 		m.alert.Init(),
@@ -201,10 +203,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasksModel.height = m.height
 		return m, tea.Batch(cmds...)
 
-	case linksLoadedMsg:
-		if m.currentTab == TabReadLater {
-			m.readLaterModel = NewReadLaterModel(msg.links)
-		}
 	}
 
 	// Delegate to current tab's model.
@@ -396,7 +394,7 @@ func (m Model) loadTabData() tea.Cmd {
 	case TabActivities:
 		return m.activitiesModel.loadActivities()
 	case TabReadLater:
-		return m.loadReadLater()
+		return m.readLaterModel.loadLinks()
 	case TabTags:
 		return m.tagsModel.loadTags()
 	case TabCategories:
@@ -424,16 +422,3 @@ func (m Model) loadTasks() tea.Cmd {
 	}
 }
 
-func (m Model) loadReadLater() tea.Cmd {
-	return func() tea.Msg {
-		links, err := m.db.Queries.ListLinksByStatus(context.Background(), models.ListLinksByStatusParams{
-			Status: "read_later",
-			Limit:  100,
-			Offset: 0,
-		})
-		if err != nil {
-			return errMsg{err: err}
-		}
-		return linksLoadedMsg{links: links}
-	}
-}

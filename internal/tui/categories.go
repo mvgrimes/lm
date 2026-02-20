@@ -31,8 +31,9 @@ type CategoriesModel struct {
 	mode               categoriesMode
 	links              []models.Link
 
-	// Search
+	// Search and focus
 	searchInput textinput.Model
+	focus       panelFocus
 
 	// Detail viewport for links panel
 	detailViewport viewport.Model
@@ -71,6 +72,7 @@ func NewCategoriesModel(db *database.Database) CategoriesModel {
 		searchInput: searchInput,
 		nameInput:   nameInput,
 		descInput:   descInput,
+		focus:       panelFocusSearch,
 	}
 }
 
@@ -140,60 +142,129 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 }
 
 func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cmd) {
+	// Tab / Shift+Tab cycle focus between search → list → detail.
 	switch msg.String() {
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-			if len(m.filteredCategories) > 0 {
-				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
-			}
+	case "tab":
+		m.focus = cycleFocusForward(m.focus)
+		if m.focus == panelFocusSearch {
+			m.searchInput.Focus()
+		} else {
+			m.searchInput.Blur()
 		}
 		return m, nil
-	case "down", "j":
-		if m.cursor < len(m.filteredCategories)-1 {
-			m.cursor++
-			if len(m.filteredCategories) > 0 {
-				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
-			}
+	case "shift+tab":
+		m.focus = cycleFocusBackward(m.focus)
+		if m.focus == panelFocusSearch {
+			m.searchInput.Focus()
+		} else {
+			m.searchInput.Blur()
 		}
-		return m, nil
-	case "pgup", "pgdown":
-		if m.viewportReady {
-			var cmd tea.Cmd
-			m.detailViewport, cmd = m.detailViewport.Update(msg)
-			return m, cmd
-		}
-		return m, nil
-	case "n":
-		m.mode = categoriesCreateMode
-		m.createFocus = 0
-		m.searchInput.Blur()
-		m.nameInput.Focus()
-		m.descInput.Blur()
-		return m, nil
-	case "d":
-		if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
-			return m, m.deleteCategory(m.filteredCategories[m.cursor].ID)
-		}
-		return m, nil
-	case "esc":
-		m.searchInput.SetValue("")
-		m.filterCategories()
 		return m, nil
 	}
 
-	// All other keys go to search input
-	var cmd tea.Cmd
-	m.searchInput, cmd = m.searchInput.Update(msg)
-	prevLen := len(m.filteredCategories)
-	m.filterCategories()
-	if len(m.filteredCategories) > 0 && (len(m.filteredCategories) != prevLen || m.cursor == 0) {
-		if m.cursor >= len(m.filteredCategories) {
-			m.cursor = 0
+	switch m.focus {
+	case panelFocusList:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+				if len(m.filteredCategories) > 0 {
+					return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+				}
+			}
+		case "down", "j":
+			if m.cursor < len(m.filteredCategories)-1 {
+				m.cursor++
+				if len(m.filteredCategories) > 0 {
+					return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+				}
+			}
+		case "n":
+			m.mode = categoriesCreateMode
+			m.createFocus = 0
+			m.focus = panelFocusSearch
+			m.searchInput.Blur()
+			m.nameInput.Focus()
+			m.descInput.Blur()
+		case "d":
+			if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
+				return m, m.deleteCategory(m.filteredCategories[m.cursor].ID)
+			}
+		case "esc":
+			m.focus = panelFocusSearch
+			m.searchInput.Focus()
 		}
-		return m, tea.Batch(cmd, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID))
+		return m, nil
+
+	case panelFocusDetail:
+		switch msg.String() {
+		case "pgup", "pgdown":
+			if m.viewportReady {
+				var cmd tea.Cmd
+				m.detailViewport, cmd = m.detailViewport.Update(msg)
+				return m, cmd
+			}
+		case "up", "k":
+			if m.viewportReady {
+				m.detailViewport.ScrollUp(1)
+			}
+		case "down", "j":
+			if m.viewportReady {
+				m.detailViewport.ScrollDown(1)
+			}
+		case "esc":
+			m.focus = panelFocusSearch
+			m.searchInput.Focus()
+		}
+		return m, nil
+
+	default: // panelFocusSearch
+		switch msg.String() {
+		case "up":
+			if m.cursor > 0 {
+				m.cursor--
+				if len(m.filteredCategories) > 0 {
+					return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+				}
+			}
+			return m, nil
+		case "down":
+			if m.cursor < len(m.filteredCategories)-1 {
+				m.cursor++
+				if len(m.filteredCategories) > 0 {
+					return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+				}
+			}
+			return m, nil
+		case "n":
+			m.mode = categoriesCreateMode
+			m.createFocus = 0
+			m.searchInput.Blur()
+			m.nameInput.Focus()
+			m.descInput.Blur()
+			return m, nil
+		case "d":
+			if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
+				return m, m.deleteCategory(m.filteredCategories[m.cursor].ID)
+			}
+			return m, nil
+		case "esc":
+			m.searchInput.SetValue("")
+			m.filterCategories()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		prevLen := len(m.filteredCategories)
+		m.filterCategories()
+		if len(m.filteredCategories) > 0 && (len(m.filteredCategories) != prevLen || m.cursor == 0) {
+			if m.cursor >= len(m.filteredCategories) {
+				m.cursor = 0
+			}
+			return m, tea.Batch(cmd, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID))
+		}
+		return m, cmd
 	}
-	return m, cmd
 }
 
 func (m CategoriesModel) handleCreateMode(msg tea.KeyMsg) (CategoriesModel, tea.Cmd) {
@@ -314,7 +385,7 @@ func (m CategoriesModel) viewCategories() string {
 	// Search box
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("10")).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusSearch))).
 		Padding(0, 1).
 		Width(leftWidth - 4)
 	searchBox := searchBoxStyle.Render(m.searchInput.View())
@@ -323,7 +394,7 @@ func (m CategoriesModel) viewCategories() string {
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
 
 	var leftContent strings.Builder
@@ -373,10 +444,14 @@ func (m CategoriesModel) viewCategories() string {
 	leftPanel := leftPanelStyle.Render(leftContent.String())
 
 	// Right panel — links for selected category
+	rightBorderColor := "12"
+	if m.focus == panelFocusDetail {
+		rightBorderColor = "10"
+	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("12")).
+		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
 
 	var rightContent string
@@ -402,7 +477,16 @@ func (m CategoriesModel) viewCategories() string {
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpText := "\n" + helpStyle.Render("type to search • ↑/↓/j/k: navigate • n: new category • d: delete • PgUp/PgDn: scroll • Esc: clear search")
+	var helpMsg string
+	switch m.focus {
+	case panelFocusList:
+		helpMsg = "Tab: focus right • ↑/↓/j/k: navigate • n: new category • d: delete • Esc: back to search"
+	case panelFocusDetail:
+		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+	default:
+		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • n: new category • d: delete • Esc: clear search"
+	}
+	helpText := "\n" + helpStyle.Render(helpMsg)
 
 	return mainContent + helpText
 }

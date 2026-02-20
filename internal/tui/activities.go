@@ -40,8 +40,9 @@ type ActivitiesModel struct {
 	// Mode management
 	mode activitiesMode
 
-	// Search
+	// Search and focus
 	searchInput textinput.Model
+	focus       panelFocus
 
 	// Create activity inputs
 	nameInput   textinput.Model
@@ -83,6 +84,7 @@ func NewActivitiesModel(db *database.Database) ActivitiesModel {
 		nameInput:   nameInput,
 		descInput:   descInput,
 		ctx:         context.Background(),
+		focus:       panelFocusSearch,
 	}
 }
 
@@ -203,73 +205,148 @@ func (m ActivitiesModel) Update(msg tea.Msg) (ActivitiesModel, tea.Cmd) {
 }
 
 func (m ActivitiesModel) handleViewMode(msg tea.KeyMsg) (ActivitiesModel, tea.Cmd) {
+	// Tab / Shift+Tab cycle focus between search → list → detail.
 	switch msg.String() {
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-			if len(m.filteredActivities) > 0 {
-				return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
-			}
+	case "tab":
+		m.focus = cycleFocusForward(m.focus)
+		if m.focus == panelFocusSearch {
+			m.searchInput.Focus()
+		} else {
+			m.searchInput.Blur()
 		}
 		return m, nil
-	case "down", "j":
-		if m.cursor < len(m.filteredActivities)-1 {
-			m.cursor++
-			if len(m.filteredActivities) > 0 {
-				return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
-			}
+	case "shift+tab":
+		m.focus = cycleFocusBackward(m.focus)
+		if m.focus == panelFocusSearch {
+			m.searchInput.Focus()
+		} else {
+			m.searchInput.Blur()
 		}
-		return m, nil
-	case "o":
-		// Open all links for current activity
-		if m.showLinks && len(m.links) > 0 {
-			return m, m.openLinks()
-		}
-		return m, nil
-	case "n":
-		// Create new activity
-		m.mode = activitiesCreateMode
-		m.createFocus = 0
-		m.searchInput.Blur()
-		m.nameInput.Focus()
-		m.descInput.Blur()
-		return m, nil
-	case "a":
-		// Add link to current activity
-		if len(m.filteredActivities) > 0 && m.cursor < len(m.filteredActivities) {
-			m.mode = activitiesAddLinkMode
-			m.addLinkModel = NewAddLinkModel()
-			m.addLinkModel.inModal = true
-			return m, func() tea.Msg {
-				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
-			}
-		}
-		return m, nil
-	case "pgup", "pgdown":
-		if m.viewportReady && m.showLinks {
-			var cmd tea.Cmd
-			m.detailViewport, cmd = m.detailViewport.Update(msg)
-			return m, cmd
-		}
-		return m, nil
-	case "esc":
-		m.searchInput.SetValue("")
-		m.filterActivities()
 		return m, nil
 	}
 
-	// All other keys go to search input
-	var cmd tea.Cmd
-	m.searchInput, cmd = m.searchInput.Update(msg)
-	prevLen := len(m.filteredActivities)
-	m.filterActivities()
-	if len(m.filteredActivities) > 0 && (len(m.filteredActivities) != prevLen || m.cursor == 0) {
-		if m.cursor >= len(m.filteredActivities) {
-			m.cursor = 0
+	switch m.focus {
+	case panelFocusList:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+				if len(m.filteredActivities) > 0 {
+					return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+				}
+			}
+		case "down", "j":
+			if m.cursor < len(m.filteredActivities)-1 {
+				m.cursor++
+				if len(m.filteredActivities) > 0 {
+					return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+				}
+			}
+		case "n":
+			m.mode = activitiesCreateMode
+			m.createFocus = 0
+			m.focus = panelFocusSearch
+			m.searchInput.Blur()
+			m.nameInput.Focus()
+			m.descInput.Blur()
+		case "a":
+			if len(m.filteredActivities) > 0 && m.cursor < len(m.filteredActivities) {
+				m.mode = activitiesAddLinkMode
+				m.addLinkModel = NewAddLinkModel()
+				m.addLinkModel.inModal = true
+				return m, func() tea.Msg {
+					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+				}
+			}
+		case "o":
+			if m.showLinks && len(m.links) > 0 {
+				return m, m.openLinks()
+			}
+		case "esc":
+			m.focus = panelFocusSearch
+			m.searchInput.Focus()
 		}
-		return m, tea.Batch(cmd, m.loadActivityLinks(m.filteredActivities[m.cursor].ID))
+		return m, nil
+
+	case panelFocusDetail:
+		switch msg.String() {
+		case "pgup", "pgdown":
+			if m.viewportReady && m.showLinks {
+				var cmd tea.Cmd
+				m.detailViewport, cmd = m.detailViewport.Update(msg)
+				return m, cmd
+			}
+		case "up", "k":
+			if m.viewportReady && m.showLinks {
+				m.detailViewport.ScrollUp(1)
+			}
+		case "down", "j":
+			if m.viewportReady && m.showLinks {
+				m.detailViewport.ScrollDown(1)
+			}
+		case "esc":
+			m.focus = panelFocusSearch
+			m.searchInput.Focus()
+		}
+		return m, nil
+
+	default: // panelFocusSearch
+		switch msg.String() {
+		case "up":
+			if m.cursor > 0 {
+				m.cursor--
+				if len(m.filteredActivities) > 0 {
+					return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+				}
+			}
+			return m, nil
+		case "down":
+			if m.cursor < len(m.filteredActivities)-1 {
+				m.cursor++
+				if len(m.filteredActivities) > 0 {
+					return m, m.loadActivityLinks(m.filteredActivities[m.cursor].ID)
+				}
+			}
+			return m, nil
+		case "n":
+			m.mode = activitiesCreateMode
+			m.createFocus = 0
+			m.searchInput.Blur()
+			m.nameInput.Focus()
+			m.descInput.Blur()
+			return m, nil
+		case "a":
+			if len(m.filteredActivities) > 0 && m.cursor < len(m.filteredActivities) {
+				m.mode = activitiesAddLinkMode
+				m.addLinkModel = NewAddLinkModel()
+				m.addLinkModel.inModal = true
+				return m, func() tea.Msg {
+					return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+				}
+			}
+			return m, nil
+		case "o":
+			if m.showLinks && len(m.links) > 0 {
+				return m, m.openLinks()
+			}
+			return m, nil
+		case "esc":
+			m.searchInput.SetValue("")
+			m.filterActivities()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		prevLen := len(m.filteredActivities)
+		m.filterActivities()
+		if len(m.filteredActivities) > 0 && (len(m.filteredActivities) != prevLen || m.cursor == 0) {
+			if m.cursor >= len(m.filteredActivities) {
+				m.cursor = 0
+			}
+			return m, tea.Batch(cmd, m.loadActivityLinks(m.filteredActivities[m.cursor].ID))
+		}
+		return m, cmd
 	}
-	return m, cmd
 }
 
 func (m *ActivitiesModel) filterActivities() {
@@ -393,7 +470,7 @@ func (m ActivitiesModel) viewActivities() string {
 	// Search box
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("10")).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusSearch))).
 		Padding(0, 1).
 		Width(leftWidth - 4)
 	searchBox := searchBoxStyle.Render(m.searchInput.View())
@@ -402,7 +479,7 @@ func (m ActivitiesModel) viewActivities() string {
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
 
 	var leftContent strings.Builder
@@ -460,10 +537,14 @@ func (m ActivitiesModel) viewActivities() string {
 	leftPanel := leftPanelStyle.Render(leftContent.String())
 
 	// Right panel — links for selected activity
+	rightBorderColor := "12"
+	if m.focus == panelFocusDetail {
+		rightBorderColor = "10"
+	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("12")).
+		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
 
 	var rightContent string
@@ -519,7 +600,16 @@ func (m ActivitiesModel) viewActivities() string {
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpText := "\n" + helpStyle.Render("type to search • ↑/↓/j/k: navigate • n: new • a: add link • o: open links • PgUp/PgDn: scroll • Esc: clear")
+	var helpMsg string
+	switch m.focus {
+	case panelFocusList:
+		helpMsg = "Tab: focus right • ↑/↓/j/k: navigate • n: new • a: add link • o: open links • Esc: back to search"
+	case panelFocusDetail:
+		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+	default:
+		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • n: new • a: add link • o: open links • Esc: clear"
+	}
+	helpText := "\n" + helpStyle.Render(helpMsg)
 
 	return mainContent + helpText
 }

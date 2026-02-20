@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -15,10 +16,15 @@ import (
 )
 
 type ReadLaterModel struct {
-	links  []models.Link
-	cursor int
-	db     *database.Database
-	ctx    context.Context
+	links         []models.Link
+	filteredLinks []models.Link
+	cursor        int
+	db            *database.Database
+	ctx           context.Context
+
+	// Search and focus
+	searchInput textinput.Model
+	focus       panelFocus
 
 	// Detail view
 	detailViewport viewport.Model
@@ -28,11 +34,23 @@ type ReadLaterModel struct {
 	height int
 }
 
-func NewReadLaterModel(links []models.Link) ReadLaterModel {
+func NewReadLaterModel(db *database.Database) ReadLaterModel {
+	searchInput := textinput.New()
+	searchInput.Placeholder = "Search read-later links..."
+	searchInput.Width = 50
+	searchInput.Prompt = "🔍 "
+	searchInput.Focus()
+
 	return ReadLaterModel{
-		links: links,
-		ctx:   context.Background(),
+		db:          db,
+		ctx:         context.Background(),
+		searchInput: searchInput,
+		focus:       panelFocusSearch,
 	}
+}
+
+func (m ReadLaterModel) Init() tea.Cmd {
+	return tea.Batch(m.loadLinks(), textinput.Blink)
 }
 
 func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
@@ -43,20 +61,16 @@ func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Calculate responsive widths for split view
 		leftWidth := int(float64(m.width) * 0.35)
 		if leftWidth < 30 {
 			leftWidth = 30
 		}
 		rightWidth := m.width - leftWidth - 8
-
-		// Calculate height for detail viewport
 		detailHeight := m.height - 12
 		if detailHeight < 5 {
 			detailHeight = 5
 		}
 
-		// Initialize or update detail viewport
 		if !m.viewportReady {
 			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
 			m.detailViewport.SetContent("")
@@ -65,36 +79,128 @@ func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
 			m.detailViewport.Width = rightWidth - 4
 			m.detailViewport.Height = detailHeight
 		}
-
-		if len(m.links) > 0 {
-			m.updateDetailView()
-		}
-
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-				m.updateDetailView()
-			}
-		case "down", "j":
-			if m.cursor < len(m.links)-1 {
-				m.cursor++
-				m.updateDetailView()
-			}
-		case "o", "enter":
-			if len(m.links) > 0 && m.cursor < len(m.links) {
-				return m, m.openLink(m.links[m.cursor].Url)
-			}
-		case "pgup", "pgdown":
-			// Scroll detail viewport
-			if m.viewportReady {
-				m.detailViewport, cmd = m.detailViewport.Update(msg)
-				return m, cmd
-			}
+		halfPage := (m.height - 15) / 2
+		if halfPage < 1 {
+			halfPage = 1
 		}
+
+		switch msg.String() {
+		case "tab":
+			m.focus = cycleFocusForward(m.focus)
+			if m.focus == panelFocusSearch {
+				m.searchInput.Focus()
+			} else {
+				m.searchInput.Blur()
+			}
+			return m, nil
+		case "shift+tab":
+			m.focus = cycleFocusBackward(m.focus)
+			if m.focus == panelFocusSearch {
+				m.searchInput.Focus()
+			} else {
+				m.searchInput.Blur()
+			}
+			return m, nil
+		}
+
+		switch m.focus {
+		case panelFocusList:
+			switch msg.String() {
+			case "up", "k":
+				if m.cursor > 0 {
+					m.cursor--
+					m.updateDetailView()
+				}
+			case "down", "j":
+				if m.cursor < len(m.filteredLinks)-1 {
+					m.cursor++
+					m.updateDetailView()
+				}
+			case "pgup", "ctrl+u":
+				m.cursor -= halfPage
+				if m.cursor < 0 {
+					m.cursor = 0
+				}
+				m.updateDetailView()
+			case "pgdown", "ctrl+d":
+				m.cursor += halfPage
+				if m.cursor >= len(m.filteredLinks) {
+					m.cursor = len(m.filteredLinks) - 1
+				}
+				m.updateDetailView()
+			case "enter", "o":
+				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+					return m, m.openLink(m.filteredLinks[m.cursor].Url)
+				}
+			case "esc":
+				m.focus = panelFocusSearch
+				m.searchInput.Focus()
+			}
+			return m, nil
+
+		case panelFocusDetail:
+			switch msg.String() {
+			case "pgup", "pgdown", "ctrl+u", "ctrl+d":
+				if m.viewportReady {
+					m.detailViewport, cmd = m.detailViewport.Update(msg)
+					return m, cmd
+				}
+			case "up", "k":
+				if m.viewportReady {
+					m.detailViewport.ScrollUp(1)
+				}
+			case "down", "j":
+				if m.viewportReady {
+					m.detailViewport.ScrollDown(1)
+				}
+			case "esc":
+				m.focus = panelFocusSearch
+				m.searchInput.Focus()
+			}
+			return m, nil
+
+		default: // panelFocusSearch
+			switch msg.String() {
+			case "up":
+				if m.cursor > 0 {
+					m.cursor--
+					m.updateDetailView()
+				}
+				return m, nil
+			case "down":
+				if m.cursor < len(m.filteredLinks)-1 {
+					m.cursor++
+					m.updateDetailView()
+				}
+				return m, nil
+			case "enter", "o":
+				if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+					return m, m.openLink(m.filteredLinks[m.cursor].Url)
+				}
+				return m, nil
+			case "esc":
+				m.searchInput.SetValue("")
+				m.filterLinks()
+				return m, nil
+			}
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.filterLinks()
+			if len(m.filteredLinks) > 0 {
+				m.updateDetailView()
+			}
+			return m, cmd
+		}
+
+	case readLaterLoadedMsg:
+		m.links = msg.links
+		m.filterLinks()
+		if len(m.filteredLinks) > 0 {
+			m.updateDetailView()
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -105,42 +211,46 @@ func (m ReadLaterModel) View() string {
 		return "Loading..."
 	}
 
-	// Calculate responsive widths
 	leftWidth := int(float64(m.width) * 0.35)
 	if leftWidth < 30 {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
 
-	// Left panel - link list
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+
+	// Search box
+	searchBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusSearch))).
+		Padding(0, 1).
+		Width(leftWidth - 4)
+	searchBox := searchBoxStyle.Render(m.searchInput.View())
+
+	// Left panel
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
 
-	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10")).
-		Bold(true)
+	leftContent := searchBox + "\n\n"
 
-	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("243"))
-
-	var leftContent string
-
-	if len(m.links) == 0 {
-		leftContent = dimStyle.Render("No links to read later.\nAdd some with Ctrl+A!\n")
+	if len(m.filteredLinks) == 0 {
+		if m.searchInput.Value() != "" {
+			leftContent += dimStyle.Render("No links match your search.\n")
+		} else {
+			leftContent += dimStyle.Render("No links to read later. Add one with Ctrl+A!\n")
+		}
 	} else {
-		// Show links list with scrolling
 		maxLinks := m.height - 15
 		if maxLinks < 3 {
 			maxLinks = 3
 		}
-
 		startIdx := 0
-		endIdx := len(m.links)
-
-		// Ensure cursor is visible
+		endIdx := len(m.filteredLinks)
 		if m.cursor >= maxLinks {
 			startIdx = m.cursor - maxLinks + 1
 		}
@@ -149,26 +259,21 @@ func (m ReadLaterModel) View() string {
 		}
 
 		for i := startIdx; i < endIdx; i++ {
-			link := m.links[i]
+			link := m.filteredLinks[i]
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "• "
 			}
-
 			title := link.Title.String
 			if title == "" {
 				title = link.Url
 			}
-			// Truncate title to fit
 			if len(title) > leftWidth-8 {
 				title = title[:leftWidth-11] + "..."
 			}
-
 			line := fmt.Sprintf("%s%s", cursor, title)
-
 			if i == m.cursor {
 				leftContent += selectedStyle.Render(line) + "\n"
-				// Show short summary
 				if link.Summary.Valid && link.Summary.String != "" {
 					summary := link.Summary.String
 					if len(summary) > leftWidth-8 {
@@ -180,46 +285,34 @@ func (m ReadLaterModel) View() string {
 				leftContent += line + "\n"
 			}
 		}
-
-		// Show scroll indicator
-		if len(m.links) > maxLinks {
-			leftContent += "\n" + dimStyle.Render(fmt.Sprintf("  [%d/%d links]", m.cursor+1, len(m.links)))
+		if len(m.filteredLinks) > maxLinks {
+			leftContent += "\n" + dimStyle.Render(fmt.Sprintf("  [%d/%d links]", m.cursor+1, len(m.filteredLinks)))
 		}
 	}
 
 	leftPanel := leftPanelStyle.Render(leftContent)
 
-	// Right panel - detail view
+	// Right panel — detail view
+	rightBorderColor := "12"
+	if m.focus == panelFocusDetail {
+		rightBorderColor = "10"
+	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("12")).
+		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
 
 	var rightContent string
-
-	if len(m.links) > 0 && m.cursor < len(m.links) {
-		link := m.links[m.cursor]
-
-		titleStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("6"))
-
+	if len(m.filteredLinks) > 0 && m.cursor < len(m.filteredLinks) {
+		link := m.filteredLinks[m.cursor]
 		titleLine := titleStyle.Render("Details") + "\n\n"
-
-		// URL
 		urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 		titleLine += urlStyle.Render(link.Url) + "\n\n"
-
 		rightContent = titleLine + m.detailViewport.View()
-
-		// Show scroll indicator
 		if m.viewportReady && m.detailViewport.TotalLineCount() > m.detailViewport.Height {
 			scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
-			scrollInfo := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243")).
-				Render(fmt.Sprintf("\n[%d%% - PgUp/PgDn to scroll]", scrollPercent))
-			rightContent += scrollInfo
+			rightContent += "\n" + dimStyle.Render(fmt.Sprintf("[%d%% - PgUp/PgDn to scroll]", scrollPercent))
 		}
 	} else {
 		rightContent = dimStyle.Render("Select a link to view details...")
@@ -227,60 +320,89 @@ func (m ReadLaterModel) View() string {
 
 	rightPanel := rightPanelStyle.Render(rightContent)
 
-	// Combine panels
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 
-	// Help text
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpText := "\n" + helpStyle.Render("arrows/j/k: navigate • Enter/o: open • PgUp/PgDn: scroll details")
+	var helpMsg string
+	switch m.focus {
+	case panelFocusList:
+		helpMsg = "Tab: focus detail • ↑/↓/j/k: navigate • PgUp/PgDn: jump • Enter/o: open • Esc: back to search"
+	case panelFocusDetail:
+		helpMsg = "Tab: focus search • ↑/↓/j/k: scroll • PgUp/PgDn: scroll • Esc: back to search"
+	default:
+		helpMsg = "type to search • Tab: focus list • ↑/↓: navigate • Enter/o: open • Esc: clear search"
+	}
+	helpText := "\n" + helpStyle.Render(helpMsg)
 
 	return mainContent + helpText
 }
 
-func (m *ReadLaterModel) updateDetailView() {
-	if !m.viewportReady || len(m.links) == 0 || m.cursor >= len(m.links) {
+func (m *ReadLaterModel) filterLinks() {
+	query := strings.ToLower(m.searchInput.Value())
+	if query == "" {
+		m.filteredLinks = m.links
+		if m.cursor >= len(m.filteredLinks) {
+			m.cursor = 0
+		}
 		return
 	}
+	m.filteredLinks = []models.Link{}
+	for _, link := range m.links {
+		if strings.Contains(strings.ToLower(link.Url), query) ||
+			(link.Title.Valid && strings.Contains(strings.ToLower(link.Title.String), query)) ||
+			(link.Content.Valid && strings.Contains(strings.ToLower(link.Content.String), query)) ||
+			(link.Summary.Valid && strings.Contains(strings.ToLower(link.Summary.String), query)) {
+			m.filteredLinks = append(m.filteredLinks, link)
+		}
+	}
+	if m.cursor >= len(m.filteredLinks) {
+		m.cursor = 0
+	}
+}
 
-	link := m.links[m.cursor]
-
-	// Get viewport width for wrapping
+func (m *ReadLaterModel) updateDetailView() {
+	if !m.viewportReady || len(m.filteredLinks) == 0 || m.cursor >= len(m.filteredLinks) {
+		return
+	}
+	link := m.filteredLinks[m.cursor]
 	wrapWidth := m.detailViewport.Width
 	if wrapWidth < 20 {
 		wrapWidth = 20
 	}
 
 	var content strings.Builder
-
-	// Title
 	if link.Title.Valid && link.Title.String != "" {
-		wrapped := wrapText(link.Title.String, wrapWidth)
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render(wrapped))
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render(wrapText(link.Title.String, wrapWidth)))
 		content.WriteString("\n\n")
 	}
-
-	// Summary
 	if link.Summary.Valid && link.Summary.String != "" {
-		summaryStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("11")).
-			Bold(true)
+		summaryStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
 		content.WriteString(summaryStyle.Render("Summary:") + "\n")
-		wrapped := wrapText(link.Summary.String, wrapWidth)
-		content.WriteString(wrapped)
+		content.WriteString(wrapText(link.Summary.String, wrapWidth))
 		content.WriteString("\n\n")
 	}
-
-	// Content
 	if link.Content.Valid && link.Content.String != "" {
-		contentStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("7"))
+		contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Content:") + "\n")
-		wrapped := wrapText(link.Content.String, wrapWidth)
-		content.WriteString(contentStyle.Render(wrapped))
+		content.WriteString(contentStyle.Render(wrapText(link.Content.String, wrapWidth)))
 	}
 
 	m.detailViewport.SetContent(content.String())
 	m.detailViewport.GotoTop()
+}
+
+func (m ReadLaterModel) loadLinks() tea.Cmd {
+	return func() tea.Msg {
+		links, err := m.db.Queries.ListLinksByStatus(m.ctx, models.ListLinksByStatusParams{
+			Status: "read_later",
+			Limit:  1000,
+			Offset: 0,
+		})
+		if err != nil {
+			return errMsg{err: err}
+		}
+		return readLaterLoadedMsg{links: links}
+	}
 }
 
 func (m ReadLaterModel) openLink(url string) tea.Cmd {
@@ -288,4 +410,8 @@ func (m ReadLaterModel) openLink(url string) tea.Cmd {
 		_ = browser.OpenURL(url)
 		return nil
 	}
+}
+
+type readLaterLoadedMsg struct {
+	links []models.Link
 }
