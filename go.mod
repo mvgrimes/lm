@@ -13,6 +13,7 @@ require (
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/spf13/cobra v1.9.1
+	go.dalton.dog/bubbleup v1.3.0
 	modernc.org/sqlite v1.42.2
 )
 
@@ -43,7 +44,6 @@ require (
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	go.dalton.dog/bubbleup v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/net v0.47.0 // indirect

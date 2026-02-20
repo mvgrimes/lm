@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -23,14 +25,15 @@ var (
 )
 
 var addCmd = &cobra.Command{
-	Use:   "add <url>",
-	Short: "Add a link from the command line",
-	Long: `Fetch a URL, optionally summarise it with AI, and save it to the database.
+	Use:   "add [url...]",
+	Short: "Add one or more links from the command line",
+	Long: `Fetch URLs, optionally summarise with AI, and save to the database.
+URLs may be provided as arguments or piped via stdin (one per line).
 
   --type link (default)   Save as a standalone link.
-  --type task             Create (or find) a task and associate this link with it.
-  --type activity         Create (or find) an activity and associate this link with it.`,
-	Args: cobra.ExactArgs(1),
+  --type task             Create (or find) a task and associate this link.
+  --type activity         Create (or find) an activity and associate this link.`,
+	Args: cobra.ArbitraryArgs,
 	RunE: runAdd,
 }
 
@@ -44,7 +47,6 @@ func init() {
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
-	url := args[0]
 	ctx := context.Background()
 
 	// Validate --type
@@ -72,58 +74,118 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		summarizer = services.NewSummarizer(apiKey)
 	}
 
-	// --- Stage 1: Fetch ---
+	// Collect URLs: positional args first, then stdin if it is a pipe.
+	urls := append([]string(nil), args...)
+
+	stat, _ := os.Stdin.Stat()
+	if stat.Mode()&os.ModeCharDevice == 0 {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" && !strings.HasPrefix(line, "#") {
+				urls = append(urls, line)
+			}
+		}
+	}
+
+	if len(urls) == 0 {
+		return fmt.Errorf("no URLs provided: pass as arguments or pipe via stdin")
+	}
+
+	// Process each URL, accumulating token usage across all of them.
+	var grandInputTok, grandOutputTok int
+	var processed, skipped int
+	multi := len(urls) > 1
+
+	for i, url := range urls {
+		if multi {
+			fmt.Printf("\n[%d/%d] %s\n", i+1, len(urls), url)
+		}
+		inTok, outTok, err := addURL(ctx, db, fetcher, extractor, summarizer, url)
+		grandInputTok += inTok
+		grandOutputTok += outTok
+		if err != nil {
+			slog.Error("failed to add URL", "url", url, "error", err)
+			skipped++
+			continue
+		}
+		processed++
+	}
+
+	// Grand-total summary.
+	if multi {
+		fmt.Printf("\n--- Summary ---\n")
+		fmt.Printf("Processed: %d  Skipped: %d\n", processed, skipped)
+	}
+
+	if grandInputTok+grandOutputTok > 0 {
+		cost := float64(grandInputTok)*0.15/1_000_000.0 +
+			float64(grandOutputTok)*0.60/1_000_000.0
+		slog.Info("LLM usage total",
+			"input_tokens", grandInputTok,
+			"output_tokens", grandOutputTok,
+			"cost_usd", fmt.Sprintf("$%.5f", cost),
+		)
+		if multi {
+			fmt.Printf("LLM cost:  $%.5f  (%d in + %d out tokens)\n", cost, grandInputTok, grandOutputTok)
+		}
+	}
+
+	return nil
+}
+
+// addURL fetches, extracts, summarises, and saves a single URL.
+// It returns the number of LLM input and output tokens consumed.
+func addURL(ctx context.Context, db *database.Database, fetcher *services.Fetcher, extractor *services.Extractor, summarizer *services.Summarizer, url string) (inputTok, outputTok int, err error) {
 	fmt.Printf("Fetching %s ...\n", url)
 
-	// Check for duplicate
+	// Skip duplicates.
 	existing, err := db.Queries.GetLinkByURL(ctx, url)
 	if err == nil {
-		fmt.Printf("Link already exists (id=%d): %s\n", existing.ID, existing.Title.String)
-		return nil
+		fmt.Printf("Already exists (id=%d): %s\n", existing.ID, existing.Title.String)
+		return 0, 0, nil
 	}
 
 	html, err := fetcher.FetchURL(ctx, url)
 	if err != nil {
-		return fmt.Errorf("fetch failed: %w", err)
+		return 0, 0, fmt.Errorf("fetch failed: %w", err)
 	}
 
-	// --- Stage 2: Extract ---
 	fmt.Println("Extracting content ...")
 	title, text, err := extractor.ExtractText(html)
 	if err != nil {
-		return fmt.Errorf("extraction failed: %w", err)
+		return 0, 0, fmt.Errorf("extraction failed: %w", err)
 	}
 	content := extractor.TruncateText(text, 10000)
 
-	// --- Stage 3: Summarise ---
-	var summary, category string
-	var tags []string
-	var totalInputTok, totalOutputTok int
+	var summary, suggestedCat string
+	var suggestedTags []string
 
 	if summarizer != nil {
 		fmt.Println("Summarising ...")
 		var inTok, outTok int
+
 		summary, inTok, outTok, _ = summarizer.Summarize(ctx, title, text)
-		totalInputTok += inTok
-		totalOutputTok += outTok
+		inputTok += inTok
+		outputTok += outTok
 
-		category, tags, inTok, outTok, _ = summarizer.SuggestMetadata(ctx, title, text)
-		totalInputTok += inTok
-		totalOutputTok += outTok
+		suggestedCat, suggestedTags, inTok, outTok, _ = summarizer.SuggestMetadata(ctx, title, text)
+		inputTok += inTok
+		outputTok += outTok
+
+		if inputTok+outputTok > 0 {
+			cost := float64(inputTok)*0.15/1_000_000.0 +
+				float64(outputTok)*0.60/1_000_000.0
+			slog.Info("LLM usage",
+				"url", url,
+				"input_tokens", inputTok,
+				"output_tokens", outputTok,
+				"cost_usd", fmt.Sprintf("$%.5f", cost),
+			)
+		}
 	}
 
-	// Log LLM cost if applicable
-	if totalInputTok+totalOutputTok > 0 {
-		llmCost := float64(totalInputTok)*0.15/1_000_000.0 +
-			float64(totalOutputTok)*0.60/1_000_000.0
-		slog.Info("LLM usage",
-			"input_tokens", totalInputTok,
-			"output_tokens", totalOutputTok,
-			"cost_usd", fmt.Sprintf("$%.5f", llmCost),
-		)
-	}
-
-	// --- Stage 4: Save link ---
+	// Save link.
 	link, err := db.Queries.CreateLink(ctx, models.CreateLinkParams{
 		Url:     url,
 		Title:   sql.NullString{String: title, Valid: title != ""},
@@ -132,47 +194,47 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Status:  "read_later",
 	})
 	if err != nil {
-		return fmt.Errorf("failed to save link: %w", err)
+		return inputTok, outputTok, fmt.Errorf("failed to save link: %w", err)
 	}
 
 	fmt.Printf("Saved: [%d] %s\n", link.ID, link.Title.String)
 
-	// --- Stage 5: Category ---
+	// Category: flag value takes priority over AI suggestion.
 	catName := strings.TrimSpace(addCategory)
 	if catName == "" {
-		catName = strings.TrimSpace(category)
+		catName = strings.TrimSpace(suggestedCat)
 	}
 	if catName != "" {
-		cat, err := db.Queries.GetCategoryByName(ctx, catName)
-		if err != nil {
-			cat, err = db.Queries.CreateCategory(ctx, models.CreateCategoryParams{
+		cat, catErr := db.Queries.GetCategoryByName(ctx, catName)
+		if catErr != nil {
+			cat, catErr = db.Queries.CreateCategory(ctx, models.CreateCategoryParams{
 				Name:        catName,
 				Description: sql.NullString{Valid: false},
 			})
-			if err != nil {
-				slog.Warn("could not create category", "name", catName, "error", err)
+			if catErr != nil {
+				slog.Warn("could not create category", "name", catName, "error", catErr)
 			}
 		}
-		if err == nil {
+		if catErr == nil {
 			_ = db.Queries.LinkCategory(ctx, models.LinkCategoryParams{LinkID: link.ID, CategoryID: cat.ID})
 			fmt.Printf("Category: %s\n", cat.Name)
 		}
 	}
 
-	// --- Stage 6: Tags ---
+	// Tags: flag value takes priority over AI suggestion.
 	tagList := parseTags(addTags)
 	if len(tagList) == 0 {
-		tagList = tags
+		tagList = suggestedTags
 	}
 	for _, tagName := range tagList {
 		if tagName == "" {
 			continue
 		}
-		t, err := db.Queries.GetTagByName(ctx, tagName)
-		if err != nil {
-			t, err = db.Queries.CreateTag(ctx, tagName)
-			if err != nil {
-				slog.Warn("could not create tag", "name", tagName, "error", err)
+		t, tagErr := db.Queries.GetTagByName(ctx, tagName)
+		if tagErr != nil {
+			t, tagErr = db.Queries.CreateTag(ctx, tagName)
+			if tagErr != nil {
+				slog.Warn("could not create tag", "name", tagName, "error", tagErr)
 				continue
 			}
 		}
@@ -182,7 +244,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Tags: %s\n", strings.Join(tagList, ", "))
 	}
 
-	// --- Stage 7: Task / Activity association ---
+	// Task / Activity association.
 	switch addType {
 	case "task":
 		taskName := strings.TrimSpace(addTaskName)
@@ -192,12 +254,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if taskName == "" {
 			taskName = url
 		}
-		task, err := db.Queries.CreateTask(ctx, models.CreateTaskParams{
+		task, taskErr := db.Queries.CreateTask(ctx, models.CreateTaskParams{
 			Name:        taskName,
 			Description: sql.NullString{Valid: false},
 		})
-		if err != nil {
-			slog.Warn("could not create task", "name", taskName, "error", err)
+		if taskErr != nil {
+			slog.Warn("could not create task", "name", taskName, "error", taskErr)
 		} else {
 			_ = db.Queries.LinkTask(ctx, models.LinkTaskParams{LinkID: link.ID, TaskID: task.ID})
 			fmt.Printf("Task: %s (id=%d)\n", task.Name, task.ID)
@@ -211,12 +273,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if actName == "" {
 			actName = url
 		}
-		activity, err := db.Queries.CreateActivity(ctx, models.CreateActivityParams{
+		activity, actErr := db.Queries.CreateActivity(ctx, models.CreateActivityParams{
 			Name:        actName,
 			Description: sql.NullString{Valid: false},
 		})
-		if err != nil {
-			slog.Warn("could not create activity", "name", actName, "error", err)
+		if actErr != nil {
+			slog.Warn("could not create activity", "name", actName, "error", actErr)
 		} else {
 			_ = db.Queries.LinkActivity(ctx, models.LinkActivityParams{LinkID: link.ID, ActivityID: activity.ID})
 			fmt.Printf("Activity: %s (id=%d)\n", activity.Name, activity.ID)
@@ -227,7 +289,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nSummary: %s\n", summary)
 	}
 
-	return nil
+	return inputTok, outputTok, nil
 }
 
 func parseTags(raw string) []string {
