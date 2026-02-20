@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -21,13 +23,20 @@ const (
 )
 
 type CategoriesModel struct {
-	categories   []models.Category
-	cursor       int
-	db           *database.Database
-	ctx          context.Context
-	mode         categoriesMode
-	links        []models.Link
-	showingLinks bool
+	categories         []models.Category
+	filteredCategories []models.Category
+	cursor             int
+	db                 *database.Database
+	ctx                context.Context
+	mode               categoriesMode
+	links              []models.Link
+
+	// Search
+	searchInput textinput.Model
+
+	// Detail viewport for links panel
+	detailViewport viewport.Model
+	viewportReady  bool
 
 	// Create mode
 	nameInput   textinput.Model
@@ -39,6 +48,12 @@ type CategoriesModel struct {
 }
 
 func NewCategoriesModel(db *database.Database) CategoriesModel {
+	searchInput := textinput.New()
+	searchInput.Placeholder = "Search categories..."
+	searchInput.Width = 50
+	searchInput.Prompt = "🔍 "
+	searchInput.Focus()
+
 	nameInput := textinput.New()
 	nameInput.Placeholder = "Category name..."
 	nameInput.Width = 50
@@ -50,11 +65,12 @@ func NewCategoriesModel(db *database.Database) CategoriesModel {
 	descInput.Prompt = "Description: "
 
 	return CategoriesModel{
-		db:        db,
-		ctx:       context.Background(),
-		mode:      categoriesViewMode,
-		nameInput: nameInput,
-		descInput: descInput,
+		db:          db,
+		ctx:         context.Background(),
+		mode:        categoriesViewMode,
+		searchInput: searchInput,
+		nameInput:   nameInput,
+		descInput:   descInput,
 	}
 }
 
@@ -67,6 +83,26 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		leftWidth := int(float64(m.width) * 0.35)
+		if leftWidth < 30 {
+			leftWidth = 30
+		}
+		rightWidth := m.width - leftWidth - 8
+
+		detailHeight := m.height - 12
+		if detailHeight < 5 {
+			detailHeight = 5
+		}
+
+		if !m.viewportReady {
+			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
+			m.detailViewport.SetContent("")
+			m.viewportReady = true
+		} else {
+			m.detailViewport.Width = rightWidth - 4
+			m.detailViewport.Height = detailHeight
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -79,17 +115,24 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 
 	case categoriesLoadedMsg:
 		m.categories = msg.categories
+		m.filterCategories()
+		if len(m.filteredCategories) > 0 {
+			return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+		}
 		return m, nil
 
 	case categoryCreatedMsg:
 		m.mode = categoriesViewMode
 		m.nameInput.SetValue("")
 		m.descInput.SetValue("")
+		m.nameInput.Blur()
+		m.descInput.Blur()
+		m.searchInput.Focus()
 		return m, tea.Batch(m.loadCategories(), notifyCmd("info", "Category created!"))
 
 	case categoryLinksLoadedMsg:
 		m.links = msg.links
-		m.showingLinks = true
+		m.updateLinksView()
 		return m, nil
 	}
 
@@ -101,30 +144,56 @@ func (m CategoriesModel) handleViewMode(msg tea.KeyMsg) (CategoriesModel, tea.Cm
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
-			m.showingLinks = false
+			if len(m.filteredCategories) > 0 {
+				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+			}
 		}
+		return m, nil
 	case "down", "j":
-		if m.cursor < len(m.categories)-1 {
+		if m.cursor < len(m.filteredCategories)-1 {
 			m.cursor++
-			m.showingLinks = false
+			if len(m.filteredCategories) > 0 {
+				return m, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID)
+			}
 		}
-	case "enter":
-		if len(m.categories) > 0 && m.cursor < len(m.categories) {
-			return m, m.loadCategoryLinks(m.categories[m.cursor].ID)
+		return m, nil
+	case "pgup", "pgdown":
+		if m.viewportReady {
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
 		}
+		return m, nil
 	case "n":
-		// Create new category
 		m.mode = categoriesCreateMode
 		m.createFocus = 0
+		m.searchInput.Blur()
 		m.nameInput.Focus()
 		m.descInput.Blur()
+		return m, nil
 	case "d":
-		// Delete category
-		if len(m.categories) > 0 && m.cursor < len(m.categories) {
-			return m, m.deleteCategory(m.categories[m.cursor].ID)
+		if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
+			return m, m.deleteCategory(m.filteredCategories[m.cursor].ID)
 		}
+		return m, nil
+	case "esc":
+		m.searchInput.SetValue("")
+		m.filterCategories()
+		return m, nil
 	}
-	return m, nil
+
+	// All other keys go to search input
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	prevLen := len(m.filteredCategories)
+	m.filterCategories()
+	if len(m.filteredCategories) > 0 && (len(m.filteredCategories) != prevLen || m.cursor == 0) {
+		if m.cursor >= len(m.filteredCategories) {
+			m.cursor = 0
+		}
+		return m, tea.Batch(cmd, m.loadCategoryLinks(m.filteredCategories[m.cursor].ID))
+	}
+	return m, cmd
 }
 
 func (m CategoriesModel) handleCreateMode(msg tea.KeyMsg) (CategoriesModel, tea.Cmd) {
@@ -137,6 +206,7 @@ func (m CategoriesModel) handleCreateMode(msg tea.KeyMsg) (CategoriesModel, tea.
 		m.descInput.SetValue("")
 		m.nameInput.Blur()
 		m.descInput.Blur()
+		m.searchInput.Focus()
 		return m, nil
 	case "tab", "shift+tab":
 		m.createFocus = (m.createFocus + 1) % 2
@@ -155,13 +225,65 @@ func (m CategoriesModel) handleCreateMode(msg tea.KeyMsg) (CategoriesModel, tea.
 		}
 	}
 
-	// Update focused input
 	if m.createFocus == 0 {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	} else {
 		m.descInput, cmd = m.descInput.Update(msg)
 	}
 	return m, cmd
+}
+
+func (m *CategoriesModel) filterCategories() {
+	query := strings.ToLower(m.searchInput.Value())
+	if query == "" {
+		m.filteredCategories = m.categories
+		if m.cursor >= len(m.filteredCategories) {
+			m.cursor = 0
+		}
+		return
+	}
+
+	m.filteredCategories = []models.Category{}
+	for _, cat := range m.categories {
+		if strings.Contains(strings.ToLower(cat.Name), query) ||
+			(cat.Description.Valid && strings.Contains(strings.ToLower(cat.Description.String), query)) {
+			m.filteredCategories = append(m.filteredCategories, cat)
+		}
+	}
+	if m.cursor >= len(m.filteredCategories) {
+		m.cursor = 0
+	}
+}
+
+func (m *CategoriesModel) updateLinksView() {
+	if !m.viewportReady {
+		return
+	}
+
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+
+	var content strings.Builder
+	if len(m.links) == 0 {
+		content.WriteString(dimStyle.Render("No links in this category."))
+	} else {
+		for _, link := range m.links {
+			title := link.Title.String
+			if title == "" {
+				title = link.Url
+			}
+			content.WriteString(fmt.Sprintf("• %s\n", title))
+			content.WriteString(urlStyle.Render("  "+link.Url) + "\n")
+			if link.Summary.Valid && link.Summary.String != "" {
+				summary := link.Summary.String
+				wrapped := wrapText(summary, m.detailViewport.Width-4)
+				content.WriteString(dimStyle.Render("  "+wrapped) + "\n")
+			}
+			content.WriteString("\n")
+		}
+	}
+	m.detailViewport.SetContent(content.String())
+	m.detailViewport.GotoTop()
 }
 
 func (m CategoriesModel) View() string {
@@ -175,57 +297,114 @@ func (m CategoriesModel) View() string {
 }
 
 func (m CategoriesModel) viewCategories() string {
-	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10")).
-		Bold(true)
+	if m.width == 0 {
+		return "Loading..."
+	}
 
-	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("243"))
+	leftWidth := int(float64(m.width) * 0.35)
+	if leftWidth < 30 {
+		leftWidth = 30
+	}
+	rightWidth := m.width - leftWidth - 8
 
-	var s string
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
-	if len(m.categories) == 0 {
-		s += dimStyle.Render("No categories yet. Press 'n' to create one!\n")
+	// Search box
+	searchBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(0, 1).
+		Width(leftWidth - 4)
+	searchBox := searchBoxStyle.Render(m.searchInput.View())
+
+	// Left panel — categories list
+	leftPanelStyle := lipgloss.NewStyle().
+		Width(leftWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("8")).
+		Padding(1)
+
+	var leftContent strings.Builder
+	leftContent.WriteString(searchBox + "\n\n")
+
+	if len(m.filteredCategories) == 0 {
+		if m.searchInput.Value() != "" {
+			leftContent.WriteString(dimStyle.Render("No categories match your search.\n"))
+		} else {
+			leftContent.WriteString(dimStyle.Render("No categories yet. Press 'n' to create one!\n"))
+		}
 	} else {
-		for i, cat := range m.categories {
+		maxItems := m.height - 15
+		if maxItems < 3 {
+			maxItems = 3
+		}
+		startIdx := 0
+		endIdx := len(m.filteredCategories)
+		if m.cursor >= maxItems {
+			startIdx = m.cursor - maxItems + 1
+		}
+		if endIdx > startIdx+maxItems {
+			endIdx = startIdx + maxItems
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			cat := m.filteredCategories[i]
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "• "
 			}
-
 			line := fmt.Sprintf("%s%s", cursor, cat.Name)
-
 			if i == m.cursor {
-				s += selectedStyle.Render(line) + "\n"
+				leftContent.WriteString(selectedStyle.Render(line) + "\n")
 				if cat.Description.Valid && cat.Description.String != "" {
-					s += dimStyle.Render("  "+cat.Description.String) + "\n"
+					leftContent.WriteString(dimStyle.Render("  "+cat.Description.String) + "\n")
 				}
 			} else {
-				s += line + "\n"
+				leftContent.WriteString(line + "\n")
 			}
+		}
+		if len(m.filteredCategories) > maxItems {
+			leftContent.WriteString("\n" + dimStyle.Render(fmt.Sprintf("  [%d/%d categories]", m.cursor+1, len(m.filteredCategories))))
 		}
 	}
 
-	if m.showingLinks {
-		s += "\n" + lipgloss.NewStyle().Bold(true).Render("Links in this category:") + "\n"
-		if len(m.links) == 0 {
-			s += dimStyle.Render("  No links in this category.\n")
+	leftPanel := leftPanelStyle.Render(leftContent.String())
+
+	// Right panel — links for selected category
+	rightPanelStyle := lipgloss.NewStyle().
+		Width(rightWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(1)
+
+	var rightContent string
+	if len(m.filteredCategories) > 0 && m.cursor < len(m.filteredCategories) {
+		cat := m.filteredCategories[m.cursor]
+		header := titleStyle.Render("Links in: "+cat.Name) + "\n\n"
+
+		if m.viewportReady {
+			rightContent = header + m.detailViewport.View()
+			if m.detailViewport.TotalLineCount() > m.detailViewport.Height {
+				scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
+				rightContent += "\n" + dimStyle.Render(fmt.Sprintf("[%d%% - PgUp/PgDn to scroll]", scrollPercent))
+			}
 		} else {
-			for _, link := range m.links {
-				title := link.Title.String
-				if title == "" {
-					title = link.Url
-				}
-				s += fmt.Sprintf("  • %s\n", title)
-			}
+			rightContent = header + dimStyle.Render("Loading...")
 		}
+	} else {
+		rightContent = dimStyle.Render("Select a category to view its links.")
 	}
 
-	s += "\n" + lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("n: new category • d: delete • Enter: view links • arrows/j/k: navigate")
+	rightPanel := rightPanelStyle.Render(rightContent)
 
-	return s
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
+
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpText := "\n" + helpStyle.Render("type to search • ↑/↓/j/k: navigate • n: new category • d: delete • PgUp/PgDn: scroll • Esc: clear search")
+
+	return mainContent + helpText
 }
 
 func (m CategoriesModel) viewCreateCategory() string {
@@ -234,14 +413,23 @@ func (m CategoriesModel) viewCreateCategory() string {
 		Foreground(lipgloss.Color("6")).
 		MarginBottom(1)
 
-	s := titleStyle.Render("Create New Category") + "\n\n"
-	s += m.nameInput.View() + "\n\n"
-	s += m.descInput.View() + "\n\n"
-	s += lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("Tab: switch fields • Enter: create • Esc: cancel")
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(1, 2).
+		Width(56)
 
-	return s
+	var content strings.Builder
+	content.WriteString(titleStyle.Render("Create New Category") + "\n\n")
+	content.WriteString(m.nameInput.View() + "\n\n")
+	content.WriteString(m.descInput.View() + "\n\n")
+	content.WriteString(lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		Render("Tab: switch fields • Enter: create • Esc: cancel"))
+
+	modal := modalStyle.Render(content.String())
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 }
 
 func (m CategoriesModel) loadCategories() tea.Cmd {
@@ -283,7 +471,6 @@ func (m CategoriesModel) deleteCategory(categoryID int64) tea.Cmd {
 		if err != nil {
 			return errMsg{err: err}
 		}
-		// Reload categories
 		categories, err := m.db.Queries.ListCategories(context.Background())
 		if err != nil {
 			return errMsg{err: err}

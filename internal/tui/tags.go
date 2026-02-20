@@ -3,8 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -21,12 +23,19 @@ const (
 
 type TagsModel struct {
 	tags         []models.Tag
+	filteredTags []models.Tag
 	cursor       int
 	db           *database.Database
 	ctx          context.Context
 	mode         tagsMode
 	links        []models.Link
-	showingLinks bool
+
+	// Search
+	searchInput textinput.Model
+
+	// Detail viewport for links panel
+	detailViewport viewport.Model
+	viewportReady  bool
 
 	// Create mode
 	nameInput textinput.Model
@@ -36,16 +45,23 @@ type TagsModel struct {
 }
 
 func NewTagsModel(db *database.Database) TagsModel {
+	searchInput := textinput.New()
+	searchInput.Placeholder = "Search tags..."
+	searchInput.Width = 50
+	searchInput.Prompt = "🔍 "
+	searchInput.Focus()
+
 	nameInput := textinput.New()
 	nameInput.Placeholder = "Tag name..."
 	nameInput.Width = 50
 	nameInput.Prompt = "Name: "
 
 	return TagsModel{
-		db:        db,
-		ctx:       context.Background(),
-		mode:      tagsViewMode,
-		nameInput: nameInput,
+		db:          db,
+		ctx:         context.Background(),
+		mode:        tagsViewMode,
+		searchInput: searchInput,
+		nameInput:   nameInput,
 	}
 }
 
@@ -58,6 +74,26 @@ func (m TagsModel) Update(msg tea.Msg) (TagsModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		leftWidth := int(float64(m.width) * 0.35)
+		if leftWidth < 30 {
+			leftWidth = 30
+		}
+		rightWidth := m.width - leftWidth - 8
+
+		detailHeight := m.height - 12
+		if detailHeight < 5 {
+			detailHeight = 5
+		}
+
+		if !m.viewportReady {
+			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
+			m.detailViewport.SetContent("")
+			m.viewportReady = true
+		} else {
+			m.detailViewport.Width = rightWidth - 4
+			m.detailViewport.Height = detailHeight
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -70,16 +106,22 @@ func (m TagsModel) Update(msg tea.Msg) (TagsModel, tea.Cmd) {
 
 	case tagsLoadedMsg:
 		m.tags = msg.tags
+		m.filterTags()
+		if len(m.filteredTags) > 0 {
+			return m, m.loadTagLinks(m.filteredTags[m.cursor].ID)
+		}
 		return m, nil
 
 	case tagCreatedMsg:
 		m.mode = tagsViewMode
 		m.nameInput.SetValue("")
+		m.nameInput.Blur()
+		m.searchInput.Focus()
 		return m, tea.Batch(m.loadTags(), notifyCmd("info", "Tag created!"))
 
 	case tagLinksLoadedMsg:
 		m.links = msg.links
-		m.showingLinks = true
+		m.updateLinksView()
 		return m, nil
 	}
 
@@ -91,28 +133,55 @@ func (m TagsModel) handleViewMode(msg tea.KeyMsg) (TagsModel, tea.Cmd) {
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
-			m.showingLinks = false
+			if len(m.filteredTags) > 0 {
+				return m, m.loadTagLinks(m.filteredTags[m.cursor].ID)
+			}
 		}
+		return m, nil
 	case "down", "j":
-		if m.cursor < len(m.tags)-1 {
+		if m.cursor < len(m.filteredTags)-1 {
 			m.cursor++
-			m.showingLinks = false
+			if len(m.filteredTags) > 0 {
+				return m, m.loadTagLinks(m.filteredTags[m.cursor].ID)
+			}
 		}
-	case "enter":
-		if len(m.tags) > 0 && m.cursor < len(m.tags) {
-			return m, m.loadTagLinks(m.tags[m.cursor].ID)
+		return m, nil
+	case "pgup", "pgdown":
+		if m.viewportReady {
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
 		}
+		return m, nil
 	case "n":
-		// Create new tag
 		m.mode = tagsCreateMode
+		m.searchInput.Blur()
 		m.nameInput.Focus()
+		return m, nil
 	case "d":
-		// Delete tag
-		if len(m.tags) > 0 && m.cursor < len(m.tags) {
-			return m, m.deleteTag(m.tags[m.cursor].ID)
+		if len(m.filteredTags) > 0 && m.cursor < len(m.filteredTags) {
+			return m, m.deleteTag(m.filteredTags[m.cursor].ID)
 		}
+		return m, nil
+	case "esc":
+		m.searchInput.SetValue("")
+		m.filterTags()
+		return m, nil
 	}
-	return m, nil
+
+	// All other keys go to search input
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	prevLen := len(m.filteredTags)
+	m.filterTags()
+	// If filter changed and we have results, load links for current
+	if len(m.filteredTags) > 0 && (len(m.filteredTags) != prevLen || m.cursor == 0) {
+		if m.cursor >= len(m.filteredTags) {
+			m.cursor = 0
+		}
+		return m, tea.Batch(cmd, m.loadTagLinks(m.filteredTags[m.cursor].ID))
+	}
+	return m, cmd
 }
 
 func (m TagsModel) handleCreateMode(msg tea.KeyMsg) (TagsModel, tea.Cmd) {
@@ -123,6 +192,7 @@ func (m TagsModel) handleCreateMode(msg tea.KeyMsg) (TagsModel, tea.Cmd) {
 		m.mode = tagsViewMode
 		m.nameInput.SetValue("")
 		m.nameInput.Blur()
+		m.searchInput.Focus()
 		return m, nil
 	case "enter":
 		name := m.nameInput.Value()
@@ -133,6 +203,58 @@ func (m TagsModel) handleCreateMode(msg tea.KeyMsg) (TagsModel, tea.Cmd) {
 
 	m.nameInput, cmd = m.nameInput.Update(msg)
 	return m, cmd
+}
+
+func (m *TagsModel) filterTags() {
+	query := strings.ToLower(m.searchInput.Value())
+	if query == "" {
+		m.filteredTags = m.tags
+		if m.cursor >= len(m.filteredTags) {
+			m.cursor = 0
+		}
+		return
+	}
+
+	m.filteredTags = []models.Tag{}
+	for _, tag := range m.tags {
+		if strings.Contains(strings.ToLower(tag.Name), query) {
+			m.filteredTags = append(m.filteredTags, tag)
+		}
+	}
+	if m.cursor >= len(m.filteredTags) {
+		m.cursor = 0
+	}
+}
+
+func (m *TagsModel) updateLinksView() {
+	if !m.viewportReady {
+		return
+	}
+
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+
+	var content strings.Builder
+	if len(m.links) == 0 {
+		content.WriteString(dimStyle.Render("No links with this tag."))
+	} else {
+		for _, link := range m.links {
+			title := link.Title.String
+			if title == "" {
+				title = link.Url
+			}
+			content.WriteString(fmt.Sprintf("• %s\n", title))
+			content.WriteString(urlStyle.Render("  "+link.Url) + "\n")
+			if link.Summary.Valid && link.Summary.String != "" {
+				summary := link.Summary.String
+				wrapped := wrapText(summary, m.detailViewport.Width-4)
+				content.WriteString(dimStyle.Render("  "+wrapped) + "\n")
+			}
+			content.WriteString("\n")
+		}
+	}
+	m.detailViewport.SetContent(content.String())
+	m.detailViewport.GotoTop()
 }
 
 func (m TagsModel) View() string {
@@ -146,55 +268,111 @@ func (m TagsModel) View() string {
 }
 
 func (m TagsModel) viewTags() string {
-	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("10")).
-		Bold(true)
+	if m.width == 0 {
+		return "Loading..."
+	}
 
-	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("243"))
+	leftWidth := int(float64(m.width) * 0.35)
+	if leftWidth < 30 {
+		leftWidth = 30
+	}
+	rightWidth := m.width - leftWidth - 8
 
-	var s string
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
+	// Search box
+	searchBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(0, 1).
+		Width(leftWidth - 4)
+	searchBox := searchBoxStyle.Render(m.searchInput.View())
 
-	if len(m.tags) == 0 {
-		s += dimStyle.Render("No tags yet. Press 'n' to create one!\n")
+	// Left panel — tags list
+	leftPanelStyle := lipgloss.NewStyle().
+		Width(leftWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("8")).
+		Padding(1)
+
+	var leftContent strings.Builder
+	leftContent.WriteString(searchBox + "\n\n")
+
+	if len(m.filteredTags) == 0 {
+		if m.searchInput.Value() != "" {
+			leftContent.WriteString(dimStyle.Render("No tags match your search.\n"))
+		} else {
+			leftContent.WriteString(dimStyle.Render("No tags yet. Press 'n' to create one!\n"))
+		}
 	} else {
-		for i, tag := range m.tags {
+		maxItems := m.height - 15
+		if maxItems < 3 {
+			maxItems = 3
+		}
+		startIdx := 0
+		endIdx := len(m.filteredTags)
+		if m.cursor >= maxItems {
+			startIdx = m.cursor - maxItems + 1
+		}
+		if endIdx > startIdx+maxItems {
+			endIdx = startIdx + maxItems
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			tag := m.filteredTags[i]
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "• "
 			}
-
 			line := fmt.Sprintf("%s%s", cursor, tag.Name)
-
 			if i == m.cursor {
-				s += selectedStyle.Render(line) + "\n"
+				leftContent.WriteString(selectedStyle.Render(line) + "\n")
 			} else {
-				s += line + "\n"
+				leftContent.WriteString(line + "\n")
 			}
+		}
+		if len(m.filteredTags) > maxItems {
+			leftContent.WriteString("\n" + dimStyle.Render(fmt.Sprintf("  [%d/%d tags]", m.cursor+1, len(m.filteredTags))))
 		}
 	}
 
-	if m.showingLinks {
-		s += "\n" + lipgloss.NewStyle().Bold(true).Render("Links with this tag:") + "\n"
-		if len(m.links) == 0 {
-			s += dimStyle.Render("  No links with this tag.\n")
+	leftPanel := leftPanelStyle.Render(leftContent.String())
+
+	// Right panel — links for selected tag
+	rightPanelStyle := lipgloss.NewStyle().
+		Width(rightWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(1)
+
+	var rightContent string
+	if len(m.filteredTags) > 0 && m.cursor < len(m.filteredTags) {
+		tag := m.filteredTags[m.cursor]
+		header := titleStyle.Render("Links for: "+tag.Name) + "\n\n"
+
+		if m.viewportReady {
+			rightContent = header + m.detailViewport.View()
+			if m.detailViewport.TotalLineCount() > m.detailViewport.Height {
+				scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
+				rightContent += "\n" + dimStyle.Render(fmt.Sprintf("[%d%% - PgUp/PgDn to scroll]", scrollPercent))
+			}
 		} else {
-			for _, link := range m.links {
-				title := link.Title.String
-				if title == "" {
-					title = link.Url
-				}
-				s += fmt.Sprintf("  • %s\n", title)
-			}
+			rightContent = header + dimStyle.Render("Loading...")
 		}
+	} else {
+		rightContent = dimStyle.Render("Select a tag to view its links.")
 	}
 
-	s += "\n" + lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("n: new tag • d: delete • Enter: view links • arrows/j/k: navigate")
+	rightPanel := rightPanelStyle.Render(rightContent)
 
-	return s
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
+
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpText := "\n" + helpStyle.Render("type to search • ↑/↓/j/k: navigate • n: new tag • d: delete • PgUp/PgDn: scroll • Esc: clear search")
+
+	return mainContent + helpText
 }
 
 func (m TagsModel) viewCreateTag() string {
@@ -203,13 +381,22 @@ func (m TagsModel) viewCreateTag() string {
 		Foreground(lipgloss.Color("6")).
 		MarginBottom(1)
 
-	s := titleStyle.Render("Create New Tag") + "\n\n"
-	s += m.nameInput.View() + "\n\n"
-	s += lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("Enter: create • Esc: cancel")
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(1, 2).
+		Width(50)
 
-	return s
+	var content strings.Builder
+	content.WriteString(titleStyle.Render("Create New Tag") + "\n\n")
+	content.WriteString(m.nameInput.View() + "\n\n")
+	content.WriteString(lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		Render("Enter: create • Esc: cancel"))
+
+	modal := modalStyle.Render(content.String())
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 }
 
 func (m TagsModel) loadTags() tea.Cmd {
@@ -248,7 +435,6 @@ func (m TagsModel) deleteTag(tagID int64) tea.Cmd {
 		if err != nil {
 			return errMsg{err: err}
 		}
-		// Reload tags
 		tags, err := m.db.Queries.ListTags(context.Background())
 		if err != nil {
 			return errMsg{err: err}

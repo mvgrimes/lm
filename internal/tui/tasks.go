@@ -508,14 +508,22 @@ func (m TasksModel) viewCreateTask() string {
 		Foreground(lipgloss.Color("6")).
 		MarginBottom(1)
 
-	s := titleStyle.Render("Create New Task") + "\n\n"
-	s += m.nameInput.View() + "\n\n"
-	s += m.descInput.View() + "\n\n"
-	s += lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("Tab: switch fields • Enter: create • Esc: cancel")
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(1, 2).
+		Width(56)
 
-	return s
+	var content strings.Builder
+	content.WriteString(titleStyle.Render("Create New Task") + "\n\n")
+	content.WriteString(m.nameInput.View() + "\n\n")
+	content.WriteString(m.descInput.View() + "\n\n")
+	content.WriteString(lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		Render("Tab: switch fields • Enter: create • Esc: cancel"))
+
+	modal := modalStyle.Render(content.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 }
 
 func (m TasksModel) loadTasks() tea.Cmd {
