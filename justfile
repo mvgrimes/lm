@@ -6,7 +6,7 @@ VERSION  := `perl -nE'm{VERSION\s*=\s*"(\d+\.\d+.\d+)"} && print $1' ./cmd/root.
 
 build:
   echo "Building verions {{VERSION}} of {{APP}}"
-  go build -o {{ap}} main.go
+  go build -o {{APP}} main.go
 
 # dev:
 #   ${HOME}/go/bin/air
@@ -16,18 +16,13 @@ lint:
   golangci-lint run ./... || true
   govulncheck ./...
 
-deploy:
+release:
   git diff --exit-code
-
-  cd ci && make build
   git tag "{{VERSION}}"
-  echo "{{VERSION}}" > ci/VERSION
-  cd ci && make tag
-  cd ci && make push
-  # cd ci && make k8s
-
+  git push
   git release
   git push --tags
+  goreleaser release --clean
 
 generate:
   sqlc generate
