@@ -121,6 +121,7 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
 			m.detailViewport.SetContent("")
 			m.viewportReady = true
+			m.updateDetailView() // populate if links were loaded before viewport was ready
 		} else {
 			m.detailViewport.Width = rightWidth - 4
 			m.detailViewport.Height = detailHeight

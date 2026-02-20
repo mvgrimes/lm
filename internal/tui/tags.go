@@ -92,6 +92,7 @@ func (m TagsModel) Update(msg tea.Msg) (TagsModel, tea.Cmd) {
 			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
 			m.detailViewport.SetContent("")
 			m.viewportReady = true
+			m.updateLinksView() // populate if links were loaded before viewport was ready
 		} else {
 			m.detailViewport.Width = rightWidth - 4
 			m.detailViewport.Height = detailHeight
