@@ -329,7 +329,7 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 							if m.viewportReady {
 								m.contentViewport.SetContent("")
 							}
-							return m, m.fetchLink(url, db, fetcher, ctx)
+							return m, tea.Batch(notifyCmd("info", "Fetching..."), m.fetchLink(url, db, fetcher, ctx))
 						}
 						return m, nil
 					}
@@ -350,18 +350,18 @@ func (m AddLinkModel) Update(msg tea.Msg, db *database.Database, fetcher *servic
 					m.contentViewport.SetContent("")
 				}
 				m.processStage = "Fetching..."
-				return m, m.fetchLink(url, db, fetcher, ctx)
+				return m, tea.Batch(notifyCmd("info", "Fetching..."), m.fetchLink(url, db, fetcher, ctx))
 			}
 
 		}
 
 	case linkFetchedMsg:
 		m.processStage = "Extracting..."
-		return m, m.extractLink(msg.url, msg.html, extractor)
+		return m, tea.Batch(notifyCmd("info", "Extracting..."), m.extractLink(msg.url, msg.html, extractor))
 
 	case linkExtractedMsg:
 		m.processStage = "Summarizing..."
-		return m, m.summarizeAndSave(msg.url, msg.title, msg.text, msg.content, msg.preview, db, summarizer, ctx)
+		return m, tea.Batch(notifyCmd("info", "Summarizing..."), m.summarizeAndSave(msg.url, msg.title, msg.text, msg.content, msg.preview, db, summarizer, ctx))
 
 	case linkProcessCompleteMsg:
 		m.processStage = ""
@@ -570,31 +570,10 @@ func (m AddLinkModel) View() string {
 	leftContent += lipgloss.NewStyle().Bold(true).Render(catLabel) + "\n" + m.categoryInput.View() + "\n\n"
 	leftContent += lipgloss.NewStyle().Bold(true).Render(tagLabel) + "\n" + m.tagsInput.View() + "\n\n"
 
-	// Progress indicator
+	// Progress indicator — detailed stage shown via bubbleup notification overlay.
 	if m.processStage != "" {
-		steps := []string{"Fetching...", "Extracting...", "Summarizing..."}
-		currentStep := 0
-		for i, s := range steps {
-			if s == m.processStage {
-				currentStep = i
-			}
-		}
 		progressStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
-		dimStyle2 := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-		var progressBar strings.Builder
-		for i, s := range steps {
-			if i < currentStep {
-				progressBar.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("✓ "+s))
-			} else if i == currentStep {
-				progressBar.WriteString(progressStyle.Render("⟳ "+s))
-			} else {
-				progressBar.WriteString(dimStyle2.Render("○ "+s))
-			}
-			if i < len(steps)-1 {
-				progressBar.WriteString("\n")
-			}
-		}
-		leftContent += progressBar.String() + "\n\n"
+		leftContent += progressStyle.Render("⟳ "+m.processStage) + "\n\n"
 	}
 
 	if m.suggestedCategory != "" || len(m.suggestedTags) > 0 {
