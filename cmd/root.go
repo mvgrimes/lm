@@ -8,9 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joho/godotenv"
+	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
-	"github.com/willibrandon/mtlog"
-	"github.com/willibrandon/mtlog/core"
 
 	"mccwk.com/lm/internal/database"
 	"mccwk.com/lm/internal/logging"
@@ -46,24 +45,26 @@ func init() {
 	setupLogging(nil)
 }
 
-// setupLogging configures the global slog logger backed by mtlog.
-// When sink is non-nil (TUI mode), output goes only to the in-memory sink so
-// that log lines do not corrupt the alternate-screen TUI.
+// setupLogging configures the global slog logger.
+// In CLI mode (sink == nil) it writes coloured output to stdout via tint.
+// In TUI mode (sink != nil) it routes all output to the in-memory sink so
+// that log lines do not corrupt the alternate-screen display.
 func setupLogging(sink *logging.MemorySink) {
-	level := core.InformationLevel
+	level := slog.LevelInfo
 	if debug {
-		level = core.DebugLevel
+		level = slog.LevelDebug
 	}
 
-	var opts []mtlog.Option
+	var handler slog.Handler
 	if sink != nil {
-		opts = append(opts, mtlog.WithSink(sink))
+		handler = sink
+	} else if os.Getenv("MODE") == "production" {
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	} else {
-		opts = append(opts, mtlog.WithConsole())
+		handler = tint.NewHandler(os.Stdout, &tint.Options{Level: level})
 	}
-	opts = append(opts, mtlog.WithMinimumLevel(level))
 
-	slog.SetDefault(mtlog.NewSlogLogger(opts...))
+	slog.SetDefault(slog.New(handler))
 }
 
 func configDir() (string, error) {

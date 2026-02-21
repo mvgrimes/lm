@@ -1,29 +1,30 @@
 package logging
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/willibrandon/mtlog/core"
 )
 
 const DefaultMaxEntries = 500
 
-// Entry is a single captured log event.
+// Entry is a single captured log record.
 type Entry struct {
 	Timestamp time.Time
-	Level     core.LogEventLevel
+	Level     slog.Level
 	Message   string
 }
 
-// MemorySink is an mtlog LogEventSink that buffers recent log entries in memory.
-// It is safe for concurrent use.
+// MemorySink is an slog.Handler that buffers recent log entries in memory for
+// display in the TUI log panel. It is safe for concurrent use.
 type MemorySink struct {
 	mu      sync.Mutex
 	entries []Entry
 	maxSize int
+	level   slog.Leveler
 }
 
 // NewMemorySink creates a MemorySink that retains at most maxSize entries.
@@ -31,26 +32,46 @@ func NewMemorySink(maxSize int) *MemorySink {
 	if maxSize <= 0 {
 		maxSize = DefaultMaxEntries
 	}
-	return &MemorySink{maxSize: maxSize}
+	return &MemorySink{maxSize: maxSize, level: slog.LevelDebug}
 }
 
-// Emit implements core.LogEventSink.
-func (s *MemorySink) Emit(event *core.LogEvent) {
-	msg := event.RenderMessage()
+// Enabled implements slog.Handler.
+func (s *MemorySink) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= s.level.Level()
+}
+
+// Handle implements slog.Handler.
+func (s *MemorySink) Handle(_ context.Context, r slog.Record) error {
+	var extras []string
+	r.Attrs(func(a slog.Attr) bool {
+		extras = append(extras, a.Key+"="+fmt.Sprintf("%v", a.Value.Any()))
+		return true
+	})
+
+	msg := r.Message
+	if len(extras) > 0 {
+		msg += " " + strings.Join(extras, " ")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries = append(s.entries, Entry{
-		Timestamp: event.Timestamp,
-		Level:     event.Level,
+		Timestamp: r.Time,
+		Level:     r.Level,
 		Message:   msg,
 	})
 	if len(s.entries) > s.maxSize {
 		s.entries = s.entries[len(s.entries)-s.maxSize:]
 	}
+	return nil
 }
 
-// Close implements core.LogEventSink.
-func (s *MemorySink) Close() error { return nil }
+// WithAttrs implements slog.Handler. Returns the same sink (attrs are not
+// pre-rendered; they appear per-record via Handle).
+func (s *MemorySink) WithAttrs(_ []slog.Attr) slog.Handler { return s }
+
+// WithGroup implements slog.Handler.
+func (s *MemorySink) WithGroup(_ string) slog.Handler { return s }
 
 // Entries returns a snapshot of all buffered entries.
 func (s *MemorySink) Entries() []Entry {
@@ -61,8 +82,8 @@ func (s *MemorySink) Entries() []Entry {
 	return result
 }
 
-// Render formats all entries as a newline-separated string for display in a
-// TUI viewport. Lines longer than width-2 are truncated.
+// Render formats all entries as a newline-separated string suitable for display
+// in a TUI viewport. Lines longer than width-2 are truncated.
 func (s *MemorySink) Render(width int) string {
 	entries := s.Entries()
 	if len(entries) == 0 {
@@ -84,21 +105,15 @@ func (s *MemorySink) Render(width int) string {
 	return b.String()
 }
 
-func levelLabel(l core.LogEventLevel) string {
-	switch l {
-	case core.VerboseLevel:
-		return "VRB"
-	case core.DebugLevel:
+func levelLabel(l slog.Level) string {
+	switch {
+	case l < slog.LevelInfo:
 		return "DBG"
-	case core.InformationLevel:
+	case l < slog.LevelWarn:
 		return "INF"
-	case core.WarningLevel:
+	case l < slog.LevelError:
 		return "WRN"
-	case core.ErrorLevel:
-		return "ERR"
-	case core.FatalLevel:
-		return "FTL"
 	default:
-		return "   "
+		return "ERR"
 	}
 }
