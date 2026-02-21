@@ -407,21 +407,45 @@ func (m LinksModel) View() string {
 			leftContent += dimStyle.Render("No links yet. Press Ctrl+A to add one!\n")
 		}
 	} else {
-		// Show links list with scrolling
-		maxLinks := m.height - 15 // Account for UI elements
-		if maxLinks < 3 {
-			maxLinks = 3
+		// rowsFor returns the number of display rows a link occupies:
+		// 1 for title only, 2 when a summary line is also shown.
+		rowsFor := func(link models.Link) int {
+			if link.Summary.Valid && link.Summary.String != "" {
+				return 2
+			}
+			return 1
 		}
 
+		// Available rows for the list area.
+		maxRows := m.height - 15
+		if maxRows < 3 {
+			maxRows = 3
+		}
+
+		// Find startIdx so the cursor is always in the visible window.
+		// Walk backwards from the cursor until we've used maxRows rows.
 		startIdx := 0
-		endIdx := len(m.filteredLinks)
-
-		// Ensure cursor is visible
-		if m.cursor >= maxLinks {
-			startIdx = m.cursor - maxLinks + 1
+		if m.cursor < len(m.filteredLinks) {
+			rowsInView := 0
+			for i := m.cursor; i >= 0; i-- {
+				rowsInView += rowsFor(m.filteredLinks[i])
+				if rowsInView > maxRows {
+					startIdx = i + 1
+					break
+				}
+			}
 		}
-		if endIdx > startIdx+maxLinks {
-			endIdx = startIdx + maxLinks
+
+		// Find endIdx by counting rows forward from startIdx.
+		endIdx := startIdx
+		rowsShown := 0
+		for i := startIdx; i < len(m.filteredLinks); i++ {
+			r := rowsFor(m.filteredLinks[i])
+			if rowsShown+r > maxRows {
+				break
+			}
+			rowsShown += r
+			endIdx = i + 1
 		}
 
 		for i := startIdx; i < endIdx; i++ {
@@ -458,8 +482,8 @@ func (m LinksModel) View() string {
 			}
 		}
 
-		// Show scroll indicator
-		if len(m.filteredLinks) > maxLinks {
+		// Show scroll indicator when not all items fit in the window.
+		if endIdx-startIdx < len(m.filteredLinks) {
 			leftContent += "\n" + dimStyle.Render(fmt.Sprintf("  [%d/%d links]", m.cursor+1, len(m.filteredLinks)))
 		}
 	}
