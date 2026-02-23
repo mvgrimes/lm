@@ -84,7 +84,7 @@ func (m TagsModel) Update(msg tea.Msg) (TagsModel, tea.Cmd) {
 		}
 		rightWidth := m.width - leftWidth - 8
 
-		detailHeight := m.height - 12
+		detailHeight := m.height - 14
 		if detailHeight < 5 {
 			detailHeight = 5
 		}
@@ -400,7 +400,7 @@ func (m TagsModel) viewTags() string {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 9
+	panelHeight := m.height - 6
 	if panelHeight < 5 {
 		panelHeight = 5
 	}
@@ -421,6 +421,7 @@ func (m TagsModel) viewTags() string {
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Height(panelHeight).
+		MaxHeight(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -476,6 +477,7 @@ func (m TagsModel) viewTags() string {
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Height(panelHeight).
+		MaxHeight(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)

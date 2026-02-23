@@ -430,7 +430,7 @@ func (m Model) renderCurrentTab() string {
 	footer := "\n" + m.statusBar()
 
 	contentStyle := lipgloss.NewStyle().
-		MaxHeight(availableHeight)
+		Height(availableHeight)
 
 	return contentStyle.Render(content) + footer
 }

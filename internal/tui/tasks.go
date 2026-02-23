@@ -133,7 +133,7 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 		rightWidth := m.width - leftWidth - 8
 
 		// Calculate height for detail viewport
-		detailHeight := m.height - 12
+		detailHeight := m.height - 14
 		if detailHeight < 5 {
 			detailHeight = 5
 		}
@@ -507,7 +507,7 @@ func (m TasksModel) viewTasks() string {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 9
+	panelHeight := m.height - 6
 	if panelHeight < 5 {
 		panelHeight = 5
 	}
@@ -535,6 +535,7 @@ func (m TasksModel) viewTasks() string {
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Height(panelHeight).
+		MaxHeight(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -605,6 +606,7 @@ func (m TasksModel) viewTasks() string {
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Height(panelHeight).
+		MaxHeight(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)

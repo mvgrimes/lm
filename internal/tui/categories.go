@@ -93,7 +93,7 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 		}
 		rightWidth := m.width - leftWidth - 8
 
-		detailHeight := m.height - 12
+		detailHeight := m.height - 14
 		if detailHeight < 5 {
 			detailHeight = 5
 		}
@@ -431,7 +431,7 @@ func (m CategoriesModel) viewCategories() string {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 9
+	panelHeight := m.height - 6
 	if panelHeight < 5 {
 		panelHeight = 5
 	}
@@ -452,6 +452,7 @@ func (m CategoriesModel) viewCategories() string {
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
 		Height(panelHeight).
+		MaxHeight(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -510,6 +511,7 @@ func (m CategoriesModel) viewCategories() string {
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
 		Height(panelHeight).
+		MaxHeight(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
