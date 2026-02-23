@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/mattn/go-runewidth"
 )
 
 // renderMarkdown renders a markdown string for display in the terminal using
@@ -110,4 +111,33 @@ func wrapText(text string, width int) string {
 	}
 
 	return result.String()
+}
+
+func sanitizeInlineText(text string) string {
+	if text == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer("\n", " ", "\r", " ", "\t", " ")
+	clean := strings.TrimSpace(replacer.Replace(text))
+	if clean == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(clean), " ")
+}
+
+func truncateInlineText(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	clean := sanitizeInlineText(text)
+	if clean == "" {
+		return ""
+	}
+	if runewidth.StringWidth(clean) <= maxWidth {
+		return clean
+	}
+	if maxWidth <= runewidth.StringWidth("...") {
+		return runewidth.Truncate(clean, maxWidth, "")
+	}
+	return runewidth.Truncate(clean, maxWidth, "...")
 }

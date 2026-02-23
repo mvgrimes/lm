@@ -361,6 +361,11 @@ func (m *TagsModel) updateLinksView() {
 			if title == "" {
 				title = link.Url
 			}
+			maxWidth := m.detailViewport.Width - 4
+			if maxWidth < 4 {
+				maxWidth = m.detailViewport.Width
+			}
+			title = truncateInlineText(title, maxWidth)
 			content.WriteString(fmt.Sprintf("• %s\n", title))
 			content.WriteString(urlStyle.Render("  "+link.Url) + "\n")
 			if link.Summary.Valid && link.Summary.String != "" {

@@ -464,10 +464,7 @@ func (m LinksModel) View() string {
 			if title == "" {
 				title = link.Url
 			}
-			// Truncate title to fit
-			if len(title) > leftWidth-8 {
-				title = title[:leftWidth-11] + "..."
-			}
+			title = truncateInlineText(title, leftWidth-8)
 
 			line := fmt.Sprintf("%s%s", cursor, title)
 
@@ -479,11 +476,10 @@ func (m LinksModel) View() string {
 
 			// Show short summary for all items
 			if link.Summary.Valid && link.Summary.String != "" {
-				summary := link.Summary.String
-				if len(summary) > leftWidth-8 {
-					summary = summary[:leftWidth-11] + "..."
+				summary := truncateInlineText(link.Summary.String, leftWidth-8)
+				if summary != "" {
+					leftContent += dimStyle.Render("  "+summary) + "\n"
 				}
-				leftContent += dimStyle.Render("  "+summary) + "\n"
 			}
 		}
 

@@ -628,6 +628,7 @@ func (m TasksModel) viewTasks() string {
 					if title == "" {
 						title = link.Url
 					}
+					title = truncateInlineText(title, rightWidth-6)
 					detailContent.WriteString(fmt.Sprintf("• %s\n", title))
 
 					// Show URL in dim style

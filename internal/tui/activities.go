@@ -604,6 +604,7 @@ func (m ActivitiesModel) viewActivities() string {
 					if title == "" {
 						title = link.Url
 					}
+					title = truncateInlineText(title, rightWidth-6)
 					detailContent.WriteString(fmt.Sprintf("• %s\n", title))
 					detailContent.WriteString(dimStyle.Render("  "+link.Url) + "\n")
 					if link.Summary.Valid && link.Summary.String != "" {
