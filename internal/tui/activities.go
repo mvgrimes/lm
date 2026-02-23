@@ -495,6 +495,10 @@ func (m ActivitiesModel) viewActivities() string {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
+	panelHeight := m.height - 9
+	if panelHeight < 5 {
+		panelHeight = 5
+	}
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
@@ -511,6 +515,7 @@ func (m ActivitiesModel) viewActivities() string {
 	// Left panel — activities list
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
+		Height(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -576,6 +581,7 @@ func (m ActivitiesModel) viewActivities() string {
 	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
+		Height(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)

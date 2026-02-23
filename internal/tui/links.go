@@ -360,6 +360,10 @@ func (m LinksModel) View() string {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
+	panelHeight := m.height - 9
+	if panelHeight < 5 {
+		panelHeight = 5
+	}
 
 	// Title and search bar
 	titleStyle := lipgloss.NewStyle().
@@ -385,6 +389,7 @@ func (m LinksModel) View() string {
 	}
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
+		Height(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(leftBorderColor).
 		Padding(1)
@@ -497,6 +502,7 @@ func (m LinksModel) View() string {
 	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
+		Height(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(rightBorderColor).
 		Padding(1)

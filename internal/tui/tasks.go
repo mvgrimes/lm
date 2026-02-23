@@ -507,6 +507,10 @@ func (m TasksModel) viewTasks() string {
 		leftWidth = 30
 	}
 	rightWidth := m.width - leftWidth - 8
+	panelHeight := m.height - 9
+	if panelHeight < 5 {
+		panelHeight = 5
+	}
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -530,6 +534,7 @@ func (m TasksModel) viewTasks() string {
 	// Left panel - task list
 	leftPanelStyle := lipgloss.NewStyle().
 		Width(leftWidth).
+		Height(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -599,6 +604,7 @@ func (m TasksModel) viewTasks() string {
 	}
 	rightPanelStyle := lipgloss.NewStyle().
 		Width(rightWidth).
+		Height(panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
