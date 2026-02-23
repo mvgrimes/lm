@@ -3,11 +3,14 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/dustin/go-humanize"
 	"go.dalton.dog/bubbleup"
 
 	"mccwk.com/lm/internal/database"
@@ -82,10 +85,10 @@ type Model struct {
 	alert bubbleup.AlertModel
 
 	// Log panel
-	logSink        *logging.MemorySink
-	logViewport    viewport.Model
-	logReady       bool
-	showLogPanel   bool
+	logSink      *logging.MemorySink
+	logViewport  viewport.Model
+	logReady     bool
+	showLogPanel bool
 }
 
 func NewModel(db *database.Database, apiKey string, logSink *logging.MemorySink) Model {
@@ -424,19 +427,46 @@ func (m Model) renderCurrentTab() string {
 		content = m.categoriesModel.View()
 	}
 
-	footerText := "Ctrl+A: add link • Ctrl+N/P: prev/next tab • Ctrl+L: logs • Ctrl+C: quit"
-	if m.totalLLMCost > 0 {
-		costStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-		footerText += costStyle.Render(fmt.Sprintf(" • LLM: $%.5f", m.totalLLMCost))
-	}
-	footer := "\n" + lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render(footerText)
+	footer := "\n" + m.statusBar()
 
 	contentStyle := lipgloss.NewStyle().
 		MaxHeight(availableHeight)
 
 	return contentStyle.Render(content) + footer
+}
+
+func (m Model) statusBar() string {
+	linkCount := len(m.linksModel.links)
+	matchCount := linkCount
+	switch m.currentTab {
+	case TabLinks:
+		matchCount = len(m.linksModel.filteredLinks)
+	case TabReadLater:
+		linkCount = len(m.readLaterModel.links)
+		matchCount = len(m.readLaterModel.filteredLinks)
+	}
+
+	dbSize := "?"
+	if m.db != nil && m.db.Filename != "" {
+		if info, err := os.Stat(m.db.Filename); err == nil {
+			dbSize = humanize.Bytes(uint64(info.Size()))
+		}
+	}
+
+	segments := []string{
+		fmt.Sprintf("links: %d", linkCount),
+		fmt.Sprintf("matches: %d", matchCount),
+		fmt.Sprintf("db: %s", dbSize),
+		fmt.Sprintf("llm: $%.5f", m.totalLLMCost),
+	}
+	status := strings.Join(segments, " • ")
+
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("236")).
+		Padding(0, 1).
+		Width(m.width).
+		Render(status)
 }
 
 func (m Model) renderLogPanel() string {

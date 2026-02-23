@@ -16,7 +16,7 @@ import (
 	"mccwk.com/lm/internal/tui"
 )
 
-const VERSION = "0.1.4"
+const VERSION = "0.1.5"
 
 var (
 	debug bool
