@@ -106,30 +106,10 @@ func (m LinksModel) Update(msg tea.Msg) (LinksModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Calculate responsive widths for split view
-		leftWidth := int(float64(m.width) * 0.35)
-		if leftWidth < 30 {
-			leftWidth = 30
-		}
-		rightWidth := m.width - leftWidth - 8
-
-		// Calculate height for detail viewport
-		// Account for: title(2) + tabs(3) + search(3) + footer(2) + borders(2)
-		detailHeight := m.height - 14
-		if detailHeight < 5 {
-			detailHeight = 5
-		}
-
-		// Initialize or update detail viewport
-		if !m.viewportReady {
-			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
-			m.detailViewport.SetContent("")
-			m.viewportReady = true
+		dims := calcSplitViewDims(m.width, m.height)
+		initOrResizeViewport(&m.detailViewport, &m.viewportReady, dims.rightWidth-4, dims.detailHeight, func() {
 			m.updateDetailView() // populate if links were loaded before viewport was ready
-		} else {
-			m.detailViewport.Width = rightWidth - 4
-			m.detailViewport.Height = detailHeight
-		}
+		})
 		m.updateDetailView()
 
 		return m, nil
@@ -354,45 +334,22 @@ func (m LinksModel) View() string {
 		return "Loading..."
 	}
 
-	// Calculate responsive widths
-	leftWidth := int(float64(m.width) * 0.35)
-	if leftWidth < 30 {
-		leftWidth = 30
-	}
-	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 6
-	if panelHeight < 5 {
-		panelHeight = 5
-	}
+	dims := calcSplitViewDims(m.width, m.height)
 
 	// Title and search bar
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("6"))
 
-	searchBorderColor := lipgloss.Color("10")
-	if m.focus != panelFocusSearch {
-		searchBorderColor = lipgloss.Color("8")
-	}
-	searchBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(searchBorderColor).
-		Padding(0, 1).
-		Width(leftWidth - 4)
-
-	searchBox := searchBoxStyle.Render(m.searchInput.View())
+	searchBox := renderSearchBox(m.searchInput, m.focus == panelFocusSearch, dims.leftWidth-4)
 
 	// Left panel — link list; highlight border when list is focused.
-	leftBorderColor := lipgloss.Color("8")
-	if m.focus == panelFocusList {
-		leftBorderColor = lipgloss.Color("10")
-	}
 	leftPanelStyle := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.leftWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(leftBorderColor).
+		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
 
 	selectedStyle := lipgloss.NewStyle().
@@ -465,7 +422,7 @@ func (m LinksModel) View() string {
 			if title == "" {
 				title = link.Url
 			}
-			title = truncateInlineText(title, leftWidth-8)
+			title = truncateInlineText(title, dims.leftWidth-8)
 
 			line := fmt.Sprintf("%s%s", cursor, title)
 
@@ -477,7 +434,7 @@ func (m LinksModel) View() string {
 
 			// Show short summary for all items
 			if link.Summary.Valid && link.Summary.String != "" {
-				summary := truncateInlineText(link.Summary.String, leftWidth-8)
+				summary := truncateInlineText(link.Summary.String, dims.leftWidth-8)
 				if summary != "" {
 					leftContent += dimStyle.Render("  "+summary) + "\n"
 				}
@@ -498,9 +455,9 @@ func (m LinksModel) View() string {
 		rightBorderColor = lipgloss.Color("10")
 	}
 	rightPanelStyle := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.rightWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(rightBorderColor).
 		Padding(1)
@@ -519,13 +476,7 @@ func (m LinksModel) View() string {
 		rightContent = titleLine + m.detailViewport.View()
 
 		// Show scroll indicator
-		if m.viewportReady && m.detailViewport.TotalLineCount() > m.detailViewport.Height {
-			scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
-			scrollInfo := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243")).
-				Render(fmt.Sprintf("\n[%d%% - PgUp/PgDn to scroll]", scrollPercent))
-			rightContent += scrollInfo
-		}
+		rightContent += renderScrollHint(m.detailViewport, dimStyle)
 	} else {
 		rightContent = dimStyle.Render("Select a link to view details...")
 	}

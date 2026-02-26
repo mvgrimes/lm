@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -52,6 +56,82 @@ func panelBorderColor(focused bool) string {
 		return "10"
 	}
 	return "8"
+}
+
+type splitViewDims struct {
+	leftWidth    int
+	rightWidth   int
+	panelHeight  int
+	detailHeight int
+}
+
+func calcSplitViewDims(width, height int) splitViewDims {
+	leftWidth := int(float64(width) * 0.35)
+	if leftWidth < 30 {
+		leftWidth = 30
+	}
+	rightWidth := width - leftWidth - 8
+	panelHeight := height - 6
+	if panelHeight < 5 {
+		panelHeight = 5
+	}
+	detailHeight := height - 14
+	if detailHeight < 5 {
+		detailHeight = 5
+	}
+
+	return splitViewDims{
+		leftWidth:    leftWidth,
+		rightWidth:   rightWidth,
+		panelHeight:  panelHeight,
+		detailHeight: detailHeight,
+	}
+}
+
+func initOrResizeViewport(vp *viewport.Model, ready *bool, width, height int, onReady func()) {
+	if !*ready {
+		*vp = viewport.New(width, height)
+		vp.SetContent("")
+		*ready = true
+		if onReady != nil {
+			onReady()
+		}
+		return
+	}
+	vp.Width = width
+	vp.Height = height
+}
+
+func renderSearchBox(input textinput.Model, focused bool, width int) string {
+	searchBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(panelBorderColor(focused))).
+		Padding(0, 1).
+		Width(width)
+	return searchBoxStyle.Render(input.View())
+}
+
+func renderScrollHint(vp viewport.Model, dimStyle lipgloss.Style) string {
+	if vp.TotalLineCount() <= vp.Height {
+		return ""
+	}
+	scrollPercent := int(vp.ScrollPercent() * 100)
+	return "\n" + dimStyle.Render(fmt.Sprintf("[%d%% - PgUp/PgDn to scroll]", scrollPercent))
+}
+
+func visibleRange(cursor, itemCount, maxItems int) (int, int) {
+	if itemCount <= 0 || maxItems <= 0 {
+		return 0, 0
+	}
+	startIdx := 0
+	endIdx := itemCount
+	if cursor >= maxItems {
+		startIdx = cursor - maxItems + 1
+	}
+	if endIdx > startIdx+maxItems {
+		endIdx = startIdx + maxItems
+	}
+	return startIdx, endIdx
 }
 
 // linkMatchesQuery returns true when a link matches every whitespace-separated

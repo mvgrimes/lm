@@ -61,25 +61,10 @@ func (m ReadLaterModel) Update(msg tea.Msg) (ReadLaterModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		leftWidth := int(float64(m.width) * 0.35)
-		if leftWidth < 30 {
-			leftWidth = 30
-		}
-		rightWidth := m.width - leftWidth - 8
-		detailHeight := m.height - 14
-		if detailHeight < 5 {
-			detailHeight = 5
-		}
-
-		if !m.viewportReady {
-			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
-			m.detailViewport.SetContent("")
-			m.viewportReady = true
+		dims := calcSplitViewDims(m.width, m.height)
+		initOrResizeViewport(&m.detailViewport, &m.viewportReady, dims.rightWidth-4, dims.detailHeight, func() {
 			m.updateDetailView() // populate if links were loaded before viewport was ready
-		} else {
-			m.detailViewport.Width = rightWidth - 4
-			m.detailViewport.Height = detailHeight
-		}
+		})
 		m.updateDetailView()
 		return m, nil
 
@@ -217,33 +202,20 @@ func (m ReadLaterModel) View() string {
 		return "Loading..."
 	}
 
-	leftWidth := int(float64(m.width) * 0.35)
-	if leftWidth < 30 {
-		leftWidth = 30
-	}
-	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 6
-	if panelHeight < 5 {
-		panelHeight = 5
-	}
+	dims := calcSplitViewDims(m.width, m.height)
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
 	// Search box
-	searchBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusSearch))).
-		Padding(0, 1).
-		Width(leftWidth - 4)
-	searchBox := searchBoxStyle.Render(m.searchInput.View())
+	searchBox := renderSearchBox(m.searchInput, m.focus == panelFocusSearch, dims.leftWidth-4)
 
 	// Left panel
 	leftPanelStyle := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.leftWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -261,14 +233,7 @@ func (m ReadLaterModel) View() string {
 		if maxLinks < 3 {
 			maxLinks = 3
 		}
-		startIdx := 0
-		endIdx := len(m.filteredLinks)
-		if m.cursor >= maxLinks {
-			startIdx = m.cursor - maxLinks + 1
-		}
-		if endIdx > startIdx+maxLinks {
-			endIdx = startIdx + maxLinks
-		}
+		startIdx, endIdx := visibleRange(m.cursor, len(m.filteredLinks), maxLinks)
 
 		for i := startIdx; i < endIdx; i++ {
 			link := m.filteredLinks[i]
@@ -280,12 +245,12 @@ func (m ReadLaterModel) View() string {
 			if title == "" {
 				title = link.Url
 			}
-			title = truncateInlineText(title, leftWidth-8)
+			title = truncateInlineText(title, dims.leftWidth-8)
 			line := fmt.Sprintf("%s%s", cursor, title)
 			if i == m.cursor {
 				leftContent += selectedStyle.Render(line) + "\n"
 				if link.Summary.Valid && link.Summary.String != "" {
-					summary := truncateInlineText(link.Summary.String, leftWidth-8)
+					summary := truncateInlineText(link.Summary.String, dims.leftWidth-8)
 					if summary != "" {
 						leftContent += dimStyle.Render("  "+summary) + "\n"
 					}
@@ -307,9 +272,9 @@ func (m ReadLaterModel) View() string {
 		rightBorderColor = "10"
 	}
 	rightPanelStyle := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.rightWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
@@ -321,10 +286,7 @@ func (m ReadLaterModel) View() string {
 		urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 		titleLine += urlStyle.Render(link.Url) + "\n\n"
 		rightContent = titleLine + m.detailViewport.View()
-		if m.viewportReady && m.detailViewport.TotalLineCount() > m.detailViewport.Height {
-			scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
-			rightContent += "\n" + dimStyle.Render(fmt.Sprintf("[%d%% - PgUp/PgDn to scroll]", scrollPercent))
-		}
+		rightContent += renderScrollHint(m.detailViewport, dimStyle)
 	} else {
 		rightContent = dimStyle.Render("Select a link to view details...")
 	}

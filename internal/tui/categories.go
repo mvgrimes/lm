@@ -87,26 +87,10 @@ func (m CategoriesModel) Update(msg tea.Msg) (CategoriesModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		leftWidth := int(float64(m.width) * 0.35)
-		if leftWidth < 30 {
-			leftWidth = 30
-		}
-		rightWidth := m.width - leftWidth - 8
-
-		detailHeight := m.height - 14
-		if detailHeight < 5 {
-			detailHeight = 5
-		}
-
-		if !m.viewportReady {
-			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
-			m.detailViewport.SetContent("")
-			m.viewportReady = true
+		dims := calcSplitViewDims(m.width, m.height)
+		initOrResizeViewport(&m.detailViewport, &m.viewportReady, dims.rightWidth-4, dims.detailHeight, func() {
 			m.updateLinksView() // populate if links were loaded before viewport was ready
-		} else {
-			m.detailViewport.Width = rightWidth - 4
-			m.detailViewport.Height = detailHeight
-		}
+		})
 		return m, nil
 
 	case tea.KeyMsg:
@@ -426,33 +410,20 @@ func (m CategoriesModel) viewCategories() string {
 		return "Loading..."
 	}
 
-	leftWidth := int(float64(m.width) * 0.35)
-	if leftWidth < 30 {
-		leftWidth = 30
-	}
-	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 6
-	if panelHeight < 5 {
-		panelHeight = 5
-	}
+	dims := calcSplitViewDims(m.width, m.height)
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
 	// Search box
-	searchBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusSearch))).
-		Padding(0, 1).
-		Width(leftWidth - 4)
-	searchBox := searchBoxStyle.Render(m.searchInput.View())
+	searchBox := renderSearchBox(m.searchInput, m.focus == panelFocusSearch, dims.leftWidth-4)
 
 	// Left panel — categories list
 	leftPanelStyle := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.leftWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -471,14 +442,7 @@ func (m CategoriesModel) viewCategories() string {
 		if maxItems < 3 {
 			maxItems = 3
 		}
-		startIdx := 0
-		endIdx := len(m.filteredCategories)
-		if m.cursor >= maxItems {
-			startIdx = m.cursor - maxItems + 1
-		}
-		if endIdx > startIdx+maxItems {
-			endIdx = startIdx + maxItems
-		}
+		startIdx, endIdx := visibleRange(m.cursor, len(m.filteredCategories), maxItems)
 
 		for i := startIdx; i < endIdx; i++ {
 			cat := m.filteredCategories[i]
@@ -509,9 +473,9 @@ func (m CategoriesModel) viewCategories() string {
 		rightBorderColor = "10"
 	}
 	rightPanelStyle := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.rightWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
@@ -523,10 +487,7 @@ func (m CategoriesModel) viewCategories() string {
 
 		if m.viewportReady {
 			rightContent = header + m.detailViewport.View()
-			if m.detailViewport.TotalLineCount() > m.detailViewport.Height {
-				scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
-				rightContent += "\n" + dimStyle.Render(fmt.Sprintf("[%d%% - PgUp/PgDn to scroll]", scrollPercent))
-			}
+			rightContent += renderScrollHint(m.detailViewport, dimStyle)
 		} else {
 			rightContent = header + dimStyle.Render("Loading...")
 		}

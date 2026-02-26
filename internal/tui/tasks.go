@@ -125,28 +125,8 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Calculate responsive widths for split view
-		leftWidth := int(float64(m.width) * 0.35)
-		if leftWidth < 30 {
-			leftWidth = 30
-		}
-		rightWidth := m.width - leftWidth - 8
-
-		// Calculate height for detail viewport
-		detailHeight := m.height - 14
-		if detailHeight < 5 {
-			detailHeight = 5
-		}
-
-		// Initialize or update detail viewport
-		if !m.viewportReady {
-			m.detailViewport = viewport.New(rightWidth-4, detailHeight)
-			m.detailViewport.SetContent("")
-			m.viewportReady = true
-		} else {
-			m.detailViewport.Width = rightWidth - 4
-			m.detailViewport.Height = detailHeight
-		}
+		dims := calcSplitViewDims(m.width, m.height)
+		initOrResizeViewport(&m.detailViewport, &m.viewportReady, dims.rightWidth-4, dims.detailHeight, nil)
 
 		// Forward to add link model if active
 		if m.mode == tasksAddLinkMode {
@@ -501,16 +481,7 @@ func (m TasksModel) viewTasks() string {
 		return "Loading..."
 	}
 
-	// Calculate responsive widths
-	leftWidth := int(float64(m.width) * 0.35)
-	if leftWidth < 30 {
-		leftWidth = 30
-	}
-	rightWidth := m.width - leftWidth - 8
-	panelHeight := m.height - 6
-	if panelHeight < 5 {
-		panelHeight = 5
-	}
+	dims := calcSplitViewDims(m.width, m.height)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -524,18 +495,13 @@ func (m TasksModel) viewTasks() string {
 		Foreground(lipgloss.Color("243"))
 
 	// Search box
-	searchBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusSearch))).
-		Padding(0, 1).
-		Width(leftWidth - 4)
-	searchBox := searchBoxStyle.Render(m.searchInput.View())
+	searchBox := renderSearchBox(m.searchInput, m.focus == panelFocusSearch, dims.leftWidth-4)
 
 	// Left panel - task list
 	leftPanelStyle := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.leftWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(panelBorderColor(m.focus == panelFocusList))).
 		Padding(1)
@@ -554,14 +520,7 @@ func (m TasksModel) viewTasks() string {
 		if maxTasks < 3 {
 			maxTasks = 3
 		}
-		startIdx := 0
-		endIdx := len(m.filteredTasks)
-		if m.cursor >= maxTasks {
-			startIdx = m.cursor - maxTasks + 1
-		}
-		if endIdx > startIdx+maxTasks {
-			endIdx = startIdx + maxTasks
-		}
+		startIdx, endIdx := visibleRange(m.cursor, len(m.filteredTasks), maxTasks)
 
 		for i := startIdx; i < endIdx; i++ {
 			task := m.filteredTasks[i]
@@ -574,8 +533,8 @@ func (m TasksModel) viewTasks() string {
 				status = "[✓]"
 			}
 			taskName := task.Name
-			if len(taskName) > leftWidth-10 {
-				taskName = taskName[:leftWidth-13] + "..."
+			if len(taskName) > dims.leftWidth-10 {
+				taskName = taskName[:dims.leftWidth-13] + "..."
 			}
 			line := fmt.Sprintf("%s%s %s", cursor, status, taskName)
 			if i == m.cursor {
@@ -585,8 +544,8 @@ func (m TasksModel) viewTasks() string {
 			}
 			if task.Description.Valid && task.Description.String != "" {
 				desc := task.Description.String
-				if len(desc) > leftWidth-8 {
-					desc = desc[:leftWidth-11] + "..."
+				if len(desc) > dims.leftWidth-8 {
+					desc = desc[:dims.leftWidth-11] + "..."
 				}
 				leftContent.WriteString(dimStyle.Render("  "+desc) + "\n")
 			}
@@ -604,9 +563,9 @@ func (m TasksModel) viewTasks() string {
 		rightBorderColor = "10"
 	}
 	rightPanelStyle := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(panelHeight).
-		MaxHeight(panelHeight).
+		Width(dims.rightWidth).
+		Height(dims.panelHeight).
+		MaxHeight(dims.panelHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(rightBorderColor)).
 		Padding(1)
@@ -630,7 +589,7 @@ func (m TasksModel) viewTasks() string {
 					if title == "" {
 						title = link.Url
 					}
-					title = truncateInlineText(title, rightWidth-6)
+					title = truncateInlineText(title, dims.rightWidth-6)
 					detailContent.WriteString(fmt.Sprintf("• %s\n", title))
 
 					// Show URL in dim style
@@ -639,7 +598,7 @@ func (m TasksModel) viewTasks() string {
 					// Show summary if available
 					if link.Summary.Valid && link.Summary.String != "" {
 						summary := link.Summary.String
-						wrapped := wrapText(summary, rightWidth-6)
+						wrapped := wrapText(summary, dims.rightWidth-6)
 						detailContent.WriteString(dimStyle.Render("  "+wrapped) + "\n")
 					}
 					detailContent.WriteString("\n")
@@ -650,11 +609,7 @@ func (m TasksModel) viewTasks() string {
 					rightBuilder.WriteString(m.detailViewport.View())
 
 					// Show scroll indicator
-					if m.detailViewport.TotalLineCount() > m.detailViewport.Height {
-						scrollPercent := int(m.detailViewport.ScrollPercent() * 100)
-						scrollInfo := dimStyle.Render(fmt.Sprintf("\n[%d%% - PgUp/PgDn to scroll]", scrollPercent))
-						rightBuilder.WriteString(scrollInfo)
-					}
+					rightBuilder.WriteString(renderScrollHint(m.detailViewport, dimStyle))
 				} else {
 					rightBuilder.WriteString(detailContent.String())
 				}
