@@ -16,9 +16,15 @@ lint:
   golangci-lint run ./... || true
   govulncheck ./...
 
+fmt:
+  go fmt ./...
+
+test:
+  go test ./...
+
 release:
   go mod tidy
-  go fmt ./...
+  just fmt
   just build
   git diff --exit-code
   git tag "{{VERSION}}"
