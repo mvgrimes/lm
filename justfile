@@ -17,6 +17,9 @@ lint:
   govulncheck ./...
 
 release:
+  go mod tidy
+  go fmt ./...
+  just build
   git diff --exit-code
   git tag "{{VERSION}}"
   git push

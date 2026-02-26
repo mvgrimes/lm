@@ -58,9 +58,9 @@ homebrew_casks:
     repository:
       owner: mvgrimes
       name: homebrew-tap
+    homepage: https://github.com/mvgrimes/lm
+    description: Terminal-based tool to manage links, tasks, activities, and reading lists
     hooks:
       post:
         install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lm"]
-          end
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lm"] if OS.mac?
