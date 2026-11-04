@@ -62,5 +62,5 @@ homebrew_casks:
     description: Terminal-based tool to manage links, tasks, activities, and reading lists
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lm"] if OS.mac?
+        install_steps: |
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lm"] if OS.mac?

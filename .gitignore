@@ -45,8 +45,9 @@ go.work
 Thumbs.db
 
 # Build artifacts
-dist/
-build/
+/dist/
+/build/
 
 # Temp files
+_tmp/
 tmp/
